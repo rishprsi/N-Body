@@ -27,7 +27,7 @@
 #define DT 25000
 #define CENTERX 0
 #define CENTERY 0
-#define BLOCK_SIZE 1024
+#define BLOCK_SIZE 512
 #define GRID_SIZE 512
 #define MAX_N 4194304
 #define COLLISION_TH 1.0e10
@@ -38,6 +38,7 @@
 #define EARTH_MASS 5.974e24
 #define EARTH_DIA 12756
 #define HBL 1.6e29
+#define M_PI 3.14159265
 
 // FMM specific constants
 #define MAX_DEPTH 8           // Maximum depth of the octree

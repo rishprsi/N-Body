@@ -16,7 +16,9 @@
 
 #ifndef ERR_H
 #define ERR_H
+
 #include <cuda_runtime.h>
+#include "device_launch_parameters.h"
 
 #define CHECK_CUDA_ERROR(val) check((val), #val, __FILE__, __LINE__)
 template <typename T>

@@ -32,14 +32,19 @@ int main(int argc, char* argv[]) {
     }
     glfwMakeContextCurrent(window); // set context to current window
 
+    glfwSetTime(0);
+    double time = glfwGetTime();
+
     while (!glfwWindowShouldClose(window)) {  // main loop 
         glClearColor(0.0, 0.0, 0.0, 1.0);
         glClear(GL_COLOR_BUFFER_BIT); // clear the screen
-        double time = glfwGetTime();
+        double deltaTime = glfwGetTime() - time;
+        printf("%f ",deltaTime);
         storeFrame(time);
         draw(time);
         glfwSwapBuffers(window); // swap front and back buffers
         glfwPollEvents();        // poll for events
+        time = glfwGetTime();
     }
     glfwTerminate(); // terminate GLFW
     video.release();
