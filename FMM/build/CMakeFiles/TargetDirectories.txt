@@ -1,0 +1,3 @@
+/home/NETID/rishprsi/N-Body/FMM/build/CMakeFiles/FastMultipole.dir
+/home/NETID/rishprsi/N-Body/FMM/build/CMakeFiles/edit_cache.dir
+/home/NETID/rishprsi/N-Body/FMM/build/CMakeFiles/rebuild_cache.dir
