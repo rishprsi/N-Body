@@ -1,13 +1,7 @@
 ﻿#include <stdio.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
-
-#ifdef WIN32
-
-#include <glew.h>
-#include <glut.h>
-
-#endif
+#include "GLUtil.h"
 
 cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
@@ -20,17 +14,30 @@ __global__ void addKernel(int *c, const int *a, const int *b)
 int main(int argc, char* argv[]) {
 
 #ifdef WIN32
-    glutInit(&argc, argv);
-    glutCreateWindow("GLEW Test");
-    GLenum err = glewInit();
-    if (GLEW_OK != err)
+    const int WINDOW_WIDTH = 800;
+    const int WINDOW_HEIGHT = 600;
+
+    // initialize GLFW
+    if (!glfwInit())
+        return -1;
+    GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "N-Body Simulation", NULL, NULL); // create window
+    if (!window)
     {
-        /* Problem: glewInit failed, something is seriously wrong. */
-        fprintf(stderr, "Error: %s\n", glewGetErrorString(err));
+        glfwTerminate();
+        return -1;
     }
-    fprintf(stdout, "Status: Using GLEW %s\n", glewGetString(GLEW_VERSION));
+    glfwMakeContextCurrent(window); // set context to current window
+    
+    while (!glfwWindowShouldClose(window)) {  // main loop 
+        glClearColor(1.0, 1.0, 1.0, 1.0);
+        glClear(GL_COLOR_BUFFER_BIT); // clear the screen
+        draw();
+        glfwSwapBuffers(window); // swap front and back buffers
+        glfwPollEvents();        // poll for events
+    }
+    glfwTerminate(); // terminate GLFW
 #endif
-    getchar();
+
     const int arraySize = 5;
     const int a[arraySize] = { 1, 2, 3, 4, 5 };
     const int b[arraySize] = { 10, 20, 30, 40, 50 };
