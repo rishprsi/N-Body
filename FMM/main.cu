@@ -6,7 +6,7 @@
 #include "constants.h"
 #include "fastMultipoleCuda.cuh"
 
-cv::VideoWriter video("nbody.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, cv::Size(WINDOW_WIDTH, WINDOW_HEIGHT));
+extern cv::VideoWriter video;
 extern void storeFrame(Body *bodies, int nBodies, int frameNum);
 extern bool checkArgs(int nBodies, int sim, int iter);
 

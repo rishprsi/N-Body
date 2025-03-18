@@ -22,8 +22,8 @@
 #include "fastMultipoleCuda.cuh"
 
 // Tree construction kernels
-__global__ void ComputeBoundingBoxKernel(Body *bodies, Vector *minBound, Vector *maxBound, int nBodies);
-__global__ void BuildTreeKernel(Body *bodies, Cell *cells, int *cellCount, int *sortedIndex, int nBodies, int maxDepth);
+__global__ void ComputeBoundingBoxKernel(Body *bodies, Cell *cells, int *mutex, int nBodies);
+__global__ void BuildTreeKernel(Body *bodies, Cell *cells, int *cellCount, int *sortedIndex, int *mutex, int nBodies, int maxDepth);
 
 // Multipole computation kernels
 __global__ void ComputeMultipolesKernel(Body *bodies, Cell *cells, int *sortedIndex, int nCells);
@@ -46,5 +46,11 @@ __device__ void translateMultipole(Complex *source, Complex *target, Vector sour
 __device__ void translateMultipoleToLocal(Complex *multipole, Complex *local, Vector multipoleCenter, Vector localCenter);
 __device__ void evaluateLocalExpansion(Complex *local, Vector center, Vector position, Vector *force);
 __device__ void computeDirectForce(Body body1, Body body2, Vector *force);
+
+// Add ResetMutexKernel to the header
+__global__ void ResetMutexKernel(int *mutex, int n);
+
+// Reset cells kernel
+__global__ void ResetCellsKernel(Cell *cells, int *mutex, int nCells, int nBodies);
 
 #endif 

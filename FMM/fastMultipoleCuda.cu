@@ -76,31 +76,35 @@ bool checkArgs(int nBodies, int sim, int iter) {
 
 // Constructor
 FastMultipoleCuda::FastMultipoleCuda(int n) : nBodies(n), maxDepth(MAX_DEPTH) {
-    // Calculate maximum number of cells based on quadtree structure
-    maxCells = (1 << (2 * maxDepth + 2)) / 3;
+    // Use fixed size for cells like in Barnes-Hut
+    maxCells = MAX_CELLS;
     nCells = 0;
     
     // Allocate host memory
-    h_bodies = (Body*)malloc(nBodies * sizeof(Body));
-    h_cells = (Cell*)malloc(maxCells * sizeof(Cell));
-    h_cellCount = (int*)malloc(sizeof(int));
-    h_sortedIndex = (int*)malloc(nBodies * sizeof(int));
+    h_bodies = new Body[nBodies];
+    h_cells = new Cell[maxCells];
+    h_cellCount = new int;
+    h_sortedIndex = new int[nBodies];
     
     // Allocate device memory
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_bodies, nBodies * sizeof(Body)));
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_bodies_buffer, nBodies * sizeof(Body)));
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_cells, maxCells * sizeof(Cell)));
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_cellCount, sizeof(int)));
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_sortedIndex, nBodies * sizeof(int)));
+    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_bodies, sizeof(Body) * nBodies));
+    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_bodies_buffer, sizeof(Body) * nBodies));
+    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_cells, sizeof(Cell) * maxCells));
+    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_cellCount, sizeof(int)));
+    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_sortedIndex, sizeof(int) * nBodies));
+    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_mutex, sizeof(int) * maxCells));
+    
+    // Initialize cell count to zero
+    *h_cellCount = 0;
 }
 
 // Destructor
 FastMultipoleCuda::~FastMultipoleCuda() {
     // Free host memory
-    free(h_bodies);
-    free(h_cells);
-    free(h_cellCount);
-    free(h_sortedIndex);
+    delete[] h_bodies;
+    delete[] h_cells;
+    delete h_cellCount;
+    delete[] h_sortedIndex;
     
     // Free device memory
     CHECK_CUDA_ERROR(cudaFree(d_bodies));
@@ -108,6 +112,7 @@ FastMultipoleCuda::~FastMultipoleCuda() {
     CHECK_CUDA_ERROR(cudaFree(d_cells));
     CHECK_CUDA_ERROR(cudaFree(d_cellCount));
     CHECK_CUDA_ERROR(cudaFree(d_sortedIndex));
+    CHECK_CUDA_ERROR(cudaFree(d_mutex));
 }
 
 // Initialize random bodies
@@ -243,7 +248,7 @@ void FastMultipoleCuda::setBody(int i, bool isDynamic, double mass, double radiu
     h_bodies[i].acceleration = acceleration;
 }
 
-// Setup simulation
+// Setup method to initialize the simulation
 void FastMultipoleCuda::setup(int sim) {
     if (sim == 0) {
         initSpiralBodies();
@@ -258,39 +263,55 @@ void FastMultipoleCuda::setup(int sim) {
     // Copy data to device
     CHECK_CUDA_ERROR(cudaMemcpy(d_bodies, h_bodies, nBodies * sizeof(Body), cudaMemcpyHostToDevice));
     
-    // Initialize cell count
-    *h_cellCount = 0;
+    // Initialize cell count and reset cells
+    *h_cellCount = 1; // Start with just the root cell
     CHECK_CUDA_ERROR(cudaMemcpy(d_cellCount, h_cellCount, sizeof(int), cudaMemcpyHostToDevice));
+    
+    // Reset cells array
+    int blockSize = BLOCK_SIZE;
+    int gridSize = (maxCells + blockSize - 1) / blockSize;
+    ResetCellsKernel<<<gridSize, blockSize>>>(d_cells, d_mutex, maxCells, nBodies);
+    CHECK_LAST_CUDA_ERROR();
 }
 
-// Build the tree structure
-void FastMultipoleCuda::buildTree() {
+// Main update method
+void FastMultipoleCuda::update() {
     // Reset cell count
     *h_cellCount = 0;
     CHECK_CUDA_ERROR(cudaMemcpy(d_cellCount, h_cellCount, sizeof(int), cudaMemcpyHostToDevice));
     
-    // Compute bounding box
-    Vector *d_minBound, *d_maxBound;
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_minBound, sizeof(Vector)));
-    CHECK_CUDA_ERROR(cudaMalloc((void**)&d_maxBound, sizeof(Vector)));
+    // Reset mutex array
+    int blockSize = BLOCK_SIZE;
+    int gridSize = (maxCells + blockSize - 1) / blockSize;
+    ResetMutexKernel<<<gridSize, blockSize>>>(d_mutex, maxCells);
+    CHECK_LAST_CUDA_ERROR();
     
+    // Execute FMM algorithm steps
+    buildTree();
+    computeMultipoles();
+    translateMultipoles();
+    computeLocalExpansions();
+    evaluateLocalExpansions();
+    directEvaluation();
+}
+
+// Build the tree structure
+void FastMultipoleCuda::buildTree() {
+    // Compute bounding box
     int blockSize = BLOCK_SIZE;
     int gridSize = (nBodies + blockSize - 1) / blockSize;
-    
-    ComputeBoundingBoxKernel<<<gridSize, blockSize>>>(d_bodies, d_minBound, d_maxBound, nBodies);
+    ComputeBoundingBoxKernel<<<gridSize, blockSize>>>(d_bodies, d_cells, d_mutex, nBodies);
     CHECK_LAST_CUDA_ERROR();
     
     // Build the tree
-    BuildTreeKernel<<<gridSize, blockSize>>>(d_bodies, d_cells, d_cellCount, d_sortedIndex, nBodies, maxDepth);
+    blockSize = 256;
+    gridSize = (nBodies + blockSize - 1) / blockSize;
+    BuildTreeKernel<<<gridSize, blockSize>>>(d_bodies, d_cells, d_cellCount, d_sortedIndex, d_mutex, nBodies, maxDepth);
     CHECK_LAST_CUDA_ERROR();
     
     // Get the number of cells
     CHECK_CUDA_ERROR(cudaMemcpy(h_cellCount, d_cellCount, sizeof(int), cudaMemcpyDeviceToHost));
     nCells = *h_cellCount;
-    
-    // Free temporary memory
-    CHECK_CUDA_ERROR(cudaFree(d_minBound));
-    CHECK_CUDA_ERROR(cudaFree(d_maxBound));
 }
 
 // Compute multipole expansions
@@ -340,17 +361,6 @@ void FastMultipoleCuda::directEvaluation() {
     // Update positions and velocities
     ComputeForcesAndUpdateKernel<<<gridSize, blockSize>>>(d_bodies, nBodies);
     CHECK_LAST_CUDA_ERROR();
-}
-
-// Main update function
-void FastMultipoleCuda::update() {
-    // Execute FMM algorithm steps
-    buildTree();
-    computeMultipoles();
-    translateMultipoles();
-    computeLocalExpansions();
-    evaluateLocalExpansions();
-    directEvaluation();
 }
 
 // Read bodies from device

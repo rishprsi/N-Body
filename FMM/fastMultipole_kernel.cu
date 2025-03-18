@@ -51,54 +51,77 @@ __device__ int getQuadrant(Vector position, Vector center) {
     return quadrant;
 }
 
+// Custom atomic operations for double precision values
+__device__ double atomicMin(double* address, double val)
+{
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(min(val, __longlong_as_double(assumed))));
+    } while (assumed != old);
+    
+    return __longlong_as_double(old);
+}
+
+__device__ double atomicMax(double* address, double val)
+{
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed,
+                        __double_as_longlong(max(val, __longlong_as_double(assumed))));
+    } while (assumed != old);
+    
+    return __longlong_as_double(old);
+}
+
 // Compute bounding box for all bodies
-__global__ void ComputeBoundingBoxKernel(Body *bodies, Vector *minBound, Vector *maxBound, int nBodies) {
-    extern __shared__ Vector bounds[];
-    Vector *mins = bounds;
-    Vector *maxs = bounds + blockDim.x;
-    
-    int tid = threadIdx.x;
+__global__ void ComputeBoundingBoxKernel(Body *bodies, Cell *cells, int *mutex, int nBodies) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= nBodies) return;
     
-    // Initialize shared memory
-    mins[tid].x = NBODY_WIDTH;
-    mins[tid].y = NBODY_HEIGHT;
-    maxs[tid].x = -NBODY_WIDTH;
-    maxs[tid].y = -NBODY_HEIGHT;
+    Body body = bodies[idx];
     
-    // Process bodies assigned to this thread
-    if (idx < nBodies) {
-        Vector pos = bodies[idx].position;
-        mins[tid].x = pos.x;
-        mins[tid].y = pos.y;
-        maxs[tid].x = pos.x;
-        maxs[tid].y = pos.y;
+    // Update root cell bounds using atomic operations
+    if (idx == 0) {
+        // Initialize root cell
+        cells[0].center = {0, 0};
+        cells[0].size = NBODY_WIDTH;
+        cells[0].parent = -1;
+        cells[0].children[0] = cells[0].children[1] = cells[0].children[2] = cells[0].children[3] = -1;
+        cells[0].bodyStart = 0;
+        cells[0].bodyCount = nBodies;
+        cells[0].isLeaf = true;
+        cells[0].totalMass = 0.0;
+        
+        // Initialize multipole and local expansions
+        for (int i = 0; i < P; i++) {
+            cells[0].multipole[i] = {0, 0};
+            cells[0].local[i] = {0, 0};
+        }
+        
+        // Initialize bounds to extreme values
+        cells[0].minBound = {INFINITY, INFINITY};
+        cells[0].maxBound = {-INFINITY, -INFINITY};
     }
     
+    // Ensure root cell is initialized before updating bounds
     __syncthreads();
     
-    // Reduction in shared memory
-    for (int s = blockDim.x / 2; s > 0; s >>= 1) {
-        if (tid < s) {
-            mins[tid].x = fmin(mins[tid].x, mins[tid + s].x);
-            mins[tid].y = fmin(mins[tid].y, mins[tid + s].y);
-            maxs[tid].x = fmax(maxs[tid].x, maxs[tid + s].x);
-            maxs[tid].y = fmax(maxs[tid].y, maxs[tid + s].y);
-        }
-        __syncthreads();
-    }
-    
-    // Write result to global memory
-    if (tid == 0) {
-        atomicMin((int*)&minBound->x, __double_as_int(mins[0].x));
-        atomicMin((int*)&minBound->y, __double_as_int(mins[0].y));
-        atomicMax((int*)&maxBound->x, __double_as_int(maxs[0].x));
-        atomicMax((int*)&maxBound->y, __double_as_int(maxs[0].y));
-    }
+    // Update bounding box using atomic operations (following BH style)
+    atomicMin(&cells[0].minBound.x, body.position.x);
+    atomicMin(&cells[0].minBound.y, body.position.y);
+    atomicMax(&cells[0].maxBound.x, body.position.x);
+    atomicMax(&cells[0].maxBound.y, body.position.y);
 }
 
 // Build the quadtree
-__global__ void BuildTreeKernel(Body *bodies, Cell *cells, int *cellCount, int *sortedIndex, int nBodies, int maxDepth) {
+__global__ void BuildTreeKernel(Body *bodies, Cell *cells, int *cellCount, int *sortedIndex, int *mutex, int nBodies, int maxDepth) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= nBodies) return;
     
@@ -519,4 +542,42 @@ __global__ void ComputeForcesAndUpdateKernel(Body *bodies, int nBodies) {
     
     // Write back to global memory
     bodies[idx] = body;
+}
+
+// Add ResetMutexKernel implementation
+__global__ void ResetMutexKernel(int *mutex, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        mutex[idx] = 0;
+    }
+}
+
+// Reset cells kernel - follows BH's ResetKernel pattern
+__global__ void ResetCellsKernel(Cell *cells, int *mutex, int nCells, int nBodies) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < nCells) {
+        cells[idx].isLeaf = true;
+        cells[idx].parent = -1;
+        cells[idx].children[0] = cells[idx].children[1] = cells[idx].children[2] = cells[idx].children[3] = -1;
+        cells[idx].bodyStart = -1;
+        cells[idx].bodyCount = 0;
+        cells[idx].totalMass = 0.0;
+        cells[idx].minBound = {INFINITY, INFINITY};
+        cells[idx].maxBound = {-INFINITY, -INFINITY};
+        
+        // Initialize multipole and local expansions
+        for (int i = 0; i < P; i++) {
+            cells[idx].multipole[i] = {0, 0};
+            cells[idx].local[i] = {0, 0};
+        }
+        
+        mutex[idx] = 0;
+    }
+    
+    // Set up root node to handle all bodies (like BH implementation)
+    if (idx == 0) {
+        cells[idx].bodyStart = 0;
+        cells[idx].bodyCount = nBodies;
+    }
 } 

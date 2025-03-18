@@ -43,6 +43,7 @@ typedef struct
 // Cell structure for FMM
 typedef struct
 {
+    bool isLeaf;
     Vector center;
     double size;
     int parent;
@@ -51,7 +52,9 @@ typedef struct
     int bodyCount;
     Complex multipole[P];
     Complex local[P];
-    bool isLeaf;
+    Vector minBound;  // Add minBound for bounding box
+    Vector maxBound;  // Add maxBound for bounding box
+    double totalMass; // Add totalMass for center of mass calculation
 } Cell;
 
 class FastMultipoleCuda
@@ -74,6 +77,8 @@ private:
     
     int *h_sortedIndex;
     int *d_sortedIndex;
+    
+    int *d_mutex;  // Add mutex for synchronization
     
     // Simulation initialization methods
     void initRandomBodies();

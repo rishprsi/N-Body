@@ -44,5 +44,6 @@
 #define P 6                   // Number of terms in multipole expansion
 #define THETA 0.5             // Multipole acceptance criterion
 #define MAX_PARTICLES_PER_LEAF 64  // Maximum particles per leaf node
+#define MAX_CELLS 1000000     // Maximum number of cells in the quadtree
 
 #endif 
