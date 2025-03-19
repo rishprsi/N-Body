@@ -1,19 +1,3 @@
-/*
-   Copyright 2023 Hsin-Hung Wu
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-
 #include <iostream>
 #include <cmath>
 #include "barnesHut_kernel.cuh"
@@ -48,26 +32,26 @@ void BarnesHutCuda::resetCUDA()
 {
     int blockSize = BLOCK_SIZE;
     dim3 gridSize = ceil((float)nNodes / blockSize);
-    ResetKernel<<<gridSize, blockSize>>>(d_node, d_mutex, nNodes, nBodies);
+    nbody_initialize_tree<<<gridSize, blockSize>>>(d_node, d_mutex, nNodes, nBodies);
 }
 void BarnesHutCuda::computeBoundingBoxCUDA()
 {
     int blockSize = BLOCK_SIZE;
     dim3 gridSize = ceil((float)nBodies / blockSize);
-    ComputeBoundingBoxKernel<<<gridSize, blockSize>>>(d_node, d_b, d_mutex, nBodies);
+    nbody_compute_bounds<<<gridSize, blockSize>>>(d_node, d_b, d_mutex, nBodies);
 }
 void BarnesHutCuda::constructQuadTreeCUDA()
 {
     int blockSize = BLOCK_SIZE;
     dim3 gridSize = ceil((float)nBodies / blockSize);
-    ConstructQuadTreeKernel<<<1, blockSize>>>(d_node, d_b, d_b_buffer, 0, nNodes, nBodies, leafLimit);
+    nbody_build_quadtree<<<1, blockSize>>>(d_node, d_b, d_b_buffer, 0, nNodes, nBodies, leafLimit);
 }
 
 void BarnesHutCuda::computeForceCUDA()
 {
     int blockSize = 32;
     dim3 gridSize = ceil((float)nBodies / blockSize);
-    ComputeForceKernel<<<gridSize, blockSize>>>(d_node, d_b, nNodes, nBodies, leafLimit);
+    nbody_calculate_forces<<<gridSize, blockSize>>>(d_node, d_b, nNodes, nBodies);
 }
 
 void BarnesHutCuda::initRandomBodies()

@@ -1,19 +1,3 @@
-/*
-   Copyright 2023 Hsin-Hung Wu
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-
 #ifndef BARNES_HUT_KERNEL_
 #define BARNES_HUT_KERNEL_
 
@@ -26,419 +10,558 @@
 #include "barnesHutCuda.cuh"
 #include "barnesHut_kernel.cuh"
 
-/*
-----------------------------------------------------------------------------------------
-RESET KERNEL
-----------------------------------------------------------------------------------------
-*/
-__global__ void ResetKernel(Node *node, int *mutex, int nNodes, int nBodies)
-{
-    int b = blockIdx.x * blockDim.x + threadIdx.x;
+//==============================================================================
+// TYPES AND CONSTANTS
+//==============================================================================
 
-    if (b < nNodes)
-    {
-        node[b].topLeft = {INFINITY, -INFINITY};
-        node[b].botRight = {-INFINITY, INFINITY};
-        node[b].centerMass = {-1, -1};
-        node[b].totalMass = 0.0;
-        node[b].isLeaf = true;
-        node[b].start = -1;
-        node[b].end = -1;
-        mutex[b] = 0;
-    }
+// Physics parameters
+struct NBodyPhysicsParams {
+    double gravityConstant;      // Gravitational constant G
+    double timestep;             // Time step dt
+    double approxThreshold;      // Barnes-Hut threshold theta
+    double collisionThreshold;   // Collision detection threshold
+    double softeningFactor;      // Softening factor epsilon
+};
 
-    if (b == 0)
-    {
-        node[b].start = 0;
-        node[b].end = nBodies - 1;
+//==============================================================================
+// UTILITY FUNCTIONS
+//==============================================================================
+
+// Calculate distance between two points
+__device__ inline double nbody_distance(const Vector& point_a, const Vector& point_b) {
+    double delta_x = point_a.x - point_b.x;
+    double delta_y = point_a.y - point_b.y;
+    return sqrt(delta_x * delta_x + delta_y * delta_y);
+}
+
+// Check collision between two bodies
+__device__ inline bool nbody_detect_collision(const Vector& pos_a, double radius_a, 
+                                           const Vector& pos_b) {
+    double min_dist = 2.0 * radius_a + COLLISION_TH;
+    return nbody_distance(pos_a, pos_b) < min_dist;
+}
+
+// Calculate midpoint between two vectors
+__device__ inline Vector nbody_midpoint(const Vector& pt1, const Vector& pt2) {
+    Vector result;
+    result.x = 0.5 * (pt1.x + pt2.x);
+    result.y = 0.5 * (pt1.y + pt2.y);
+    return result;
+}
+
+// Determine quadrant for a point
+__device__ int nbody_determine_quadrant(const Vector& min_bound, const Vector& max_bound, 
+                                     double x_pos, double y_pos) {
+    Vector mid = nbody_midpoint(min_bound, max_bound);
+    
+    if (x_pos < mid.x) {
+        return (y_pos > mid.y) ? QuadrantDir::TOP_LEFT : QuadrantDir::BOTTOM_LEFT;
+    } else {
+        return (y_pos > mid.y) ? QuadrantDir::TOP_RIGHT : QuadrantDir::BOTTOM_RIGHT;
     }
 }
 
-/*
-----------------------------------------------------------------------------------------
-COMPUTE BOUNDING BOX
-----------------------------------------------------------------------------------------
-*/
-__global__ void ComputeBoundingBoxKernel(Node *node, Body *bodies, int *mutex, int nBodies)
-{
+//==============================================================================
+// INITIALIZATION PHASE
+//==============================================================================
 
-    __shared__ double topLeftX[BLOCK_SIZE];
-    __shared__ double topLeftY[BLOCK_SIZE];
-    __shared__ double botRightX[BLOCK_SIZE];
-    __shared__ double botRightY[BLOCK_SIZE];
+// Initialize tree nodes
+__global__ void nbody_initialize_tree(
+    Node* tree_nodes,     // Tree nodes array
+    int* mutex_array,     // Mutex array
+    int node_count,       // Total nodes
+    int body_count        // Total bodies
+) {
+    int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (thread_id < node_count) {
+        // Set default values
+        tree_nodes[thread_id].topLeft = {INFINITY, -INFINITY};
+        tree_nodes[thread_id].botRight = {-INFINITY, INFINITY};
+        tree_nodes[thread_id].centerMass = {-1.0, -1.0};
+        tree_nodes[thread_id].totalMass = 0.0;
+        tree_nodes[thread_id].isLeaf = true;
+        tree_nodes[thread_id].start = -1;
+        tree_nodes[thread_id].end = -1;
+        
+        mutex_array[thread_id] = 0;
+    }
+
+    // Set up root node
+    if (thread_id == 0) {
+        tree_nodes[0].start = 0;
+        tree_nodes[0].end = body_count - 1;
+    }
+}
+
+// Compute simulation bounding box
+__global__ void nbody_compute_bounds(
+    Node* tree_nodes,     // Tree nodes array
+    Body* bodies,         // Bodies array
+    int* mutex_array,     // Mutex array
+    int body_count        // Total bodies
+) {
+    // Shared memory for reduction
+    __shared__ double x_min_shared[BLOCK_SIZE];
+    __shared__ double y_max_shared[BLOCK_SIZE]; 
+    __shared__ double x_max_shared[BLOCK_SIZE];
+    __shared__ double y_min_shared[BLOCK_SIZE];
 
     int tx = threadIdx.x;
-    int b = blockIdx.x * blockDim.x + tx;
+    int body_idx = blockIdx.x * blockDim.x + tx;
 
-    topLeftX[tx] = INFINITY;
-    topLeftY[tx] = -INFINITY;
-    botRightX[tx] = -INFINITY;
-    botRightY[tx] = INFINITY;
+    // Initialize with extreme values
+    x_min_shared[tx] = INFINITY;
+    y_max_shared[tx] = -INFINITY;
+    x_max_shared[tx] = -INFINITY;
+    y_min_shared[tx] = INFINITY;
 
     __syncthreads();
 
-    if (b < nBodies)
-    {
-        Body body = bodies[b];
-        topLeftX[tx] = body.position.x;
-        topLeftY[tx] = body.position.y;
-        botRightX[tx] = body.position.x;
-        botRightY[tx] = body.position.y;
+    if (body_idx < body_count) {
+        Body current_body = bodies[body_idx];
+        
+        double pos_x = current_body.position.x;
+        double pos_y = current_body.position.y;
+        
+        x_min_shared[tx] = pos_x;
+        y_max_shared[tx] = pos_y;
+        x_max_shared[tx] = pos_x;
+        y_min_shared[tx] = pos_y;
     }
 
-    for (int s = blockDim.x / 2; s > 0; s >>= 1)
-    {
+    // Parallel reduction
+    for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
         __syncthreads();
-        if (tx < s)
-        {
-            topLeftX[tx] = fminf(topLeftX[tx], topLeftX[tx + s]);
-            topLeftY[tx] = fmaxf(topLeftY[tx], topLeftY[tx + s]);
-            botRightX[tx] = fmaxf(botRightX[tx], botRightX[tx + s]);
-            botRightY[tx] = fminf(botRightY[tx], botRightY[tx + s]);
+        
+        if (tx < stride) {
+            x_min_shared[tx] = fminf(x_min_shared[tx], x_min_shared[tx + stride]);
+            y_max_shared[tx] = fmaxf(y_max_shared[tx], y_max_shared[tx + stride]);
+            x_max_shared[tx] = fmaxf(x_max_shared[tx], x_max_shared[tx + stride]);
+            y_min_shared[tx] = fminf(y_min_shared[tx], y_min_shared[tx + stride]);
         }
     }
 
-    if (tx == 0)
-    {
-        while (atomicCAS(mutex, 0, 1) != 0)
-            ;
-        node[0].topLeft.x = fminf(node[0].topLeft.x, topLeftX[0] - 1.0e10);
-        node[0].topLeft.y = fmaxf(node[0].topLeft.y, topLeftY[0] + 1.0e10);
-        node[0].botRight.x = fmaxf(node[0].botRight.x, botRightX[0] + 1.0e10);
-        node[0].botRight.y = fminf(node[0].botRight.y, botRightY[0] - 1.0e10);
-        atomicExch(mutex, 0);
+    // Update global bounds
+    if (tx == 0) {
+        // Lock before update
+        while (atomicCAS(mutex_array, 0, 1) != 0) { }
+        
+        const double DOMAIN_PADDING = 1.0e10;
+        
+        // Update boundaries with padding
+        tree_nodes[0].topLeft.x = fminf(tree_nodes[0].topLeft.x, x_min_shared[0] - DOMAIN_PADDING);
+        tree_nodes[0].topLeft.y = fmaxf(tree_nodes[0].topLeft.y, y_max_shared[0] + DOMAIN_PADDING);
+        tree_nodes[0].botRight.x = fmaxf(tree_nodes[0].botRight.x, x_max_shared[0] + DOMAIN_PADDING);
+        tree_nodes[0].botRight.y = fminf(tree_nodes[0].botRight.y, y_min_shared[0] - DOMAIN_PADDING);
+        
+        // Release lock
+        atomicExch(mutex_array, 0);
     }
 }
 
-/*
-----------------------------------------------------------------------------------------
-CONSTRUCT QUAD TREE
-----------------------------------------------------------------------------------------
-*/
-__device__ int getQuadrant(Vector topLeft, Vector botRight, double x, double y)
-{
+//==============================================================================
+// TREE CONSTRUCTION PHASE
+//==============================================================================
 
-    if ((topLeft.x + botRight.x) / 2 >= x)
-    {
-        // Indicates topLeftTree
-        if ((topLeft.y + botRight.y) / 2 <= y)
-        {
-            return 2;
-        }
-        // Indicates botLeftTree
-        else
-        {
-            return 3;
-        }
-    }
-    else
-    {
-        // Indicates topRightTree
-        if ((topLeft.y + botRight.y) / 2 <= y)
-        {
-            return 1;
-        }
-        // Indicates botRightTree
-        else
-        {
-            return 4;
-        }
+// Set boundaries for a child node
+__device__ void nbody_set_boundaries(
+    Node& child_node,             // Child node
+    const Vector& min_corner,     // Min corner
+    const Vector& max_corner,     // Max corner
+    int quadrant                  // Quadrant 
+) {
+    Vector mid = nbody_midpoint(min_corner, max_corner);
+    
+    switch (quadrant) {
+    case QuadrantDir::TOP_RIGHT:
+        child_node.topLeft = {mid.x, min_corner.y};
+        child_node.botRight = {max_corner.x, mid.y};
+        break;
+        
+    case QuadrantDir::TOP_LEFT:
+        child_node.topLeft = {min_corner.x, min_corner.y};
+        child_node.botRight = {mid.x, mid.y};
+        break;
+        
+    case QuadrantDir::BOTTOM_LEFT:
+        child_node.topLeft = {min_corner.x, mid.y};
+        child_node.botRight = {mid.x, max_corner.y};
+        break;
+        
+    case QuadrantDir::BOTTOM_RIGHT:
+        child_node.topLeft = {mid.x, mid.y};
+        child_node.botRight = {max_corner.x, max_corner.y};
+        break;
     }
 }
 
-__device__ void UpdateChildBound(Vector &tl, Vector &br, Node &childNode, int quadrant)
-{
-
-    if (quadrant == 1)
-    {
-        childNode.topLeft = {(tl.x + br.x) / 2, tl.y};
-        childNode.botRight = {br.x, (tl.y + br.y) / 2};
-    }
-    else if (quadrant == 2)
-    {
-        childNode.topLeft = {tl.x, tl.y};
-        childNode.botRight = {(tl.x + br.x) / 2, (tl.y + br.y) / 2};
-    }
-    else if (quadrant == 3)
-    {
-        childNode.topLeft = {tl.x, (tl.y + br.y) / 2};
-        childNode.botRight = {(tl.x + br.x) / 2, br.y};
-    }
-    else
-    {
-        childNode.topLeft = {(tl.x + br.x) / 2, (tl.y + br.y) / 2};
-        childNode.botRight = {br.x, br.y};
+// Warp-level reduction for center of mass
+__device__ void nbody_warp_reduce_mass(
+    volatile double* mass_vals,           // Mass values
+    volatile double2* weighted_pos_vals,  // Weighted positions
+    int lane_id                           // Lane ID
+) {
+    if (lane_id < 32) {
+        // Step 1
+        mass_vals[lane_id] += mass_vals[lane_id + 32];
+        weighted_pos_vals[lane_id].x += weighted_pos_vals[lane_id + 32].x;
+        weighted_pos_vals[lane_id].y += weighted_pos_vals[lane_id + 32].y;
+        
+        // Step 2
+        mass_vals[lane_id] += mass_vals[lane_id + 16];
+        weighted_pos_vals[lane_id].x += weighted_pos_vals[lane_id + 16].x;
+        weighted_pos_vals[lane_id].y += weighted_pos_vals[lane_id + 16].y;
+        
+        // Step 3
+        mass_vals[lane_id] += mass_vals[lane_id + 8];
+        weighted_pos_vals[lane_id].x += weighted_pos_vals[lane_id + 8].x;
+        weighted_pos_vals[lane_id].y += weighted_pos_vals[lane_id + 8].y;
+        
+        // Step 4
+        mass_vals[lane_id] += mass_vals[lane_id + 4];
+        weighted_pos_vals[lane_id].x += weighted_pos_vals[lane_id + 4].x;
+        weighted_pos_vals[lane_id].y += weighted_pos_vals[lane_id + 4].y;
+        
+        // Step 5
+        mass_vals[lane_id] += mass_vals[lane_id + 2];
+        weighted_pos_vals[lane_id].x += weighted_pos_vals[lane_id + 2].x;
+        weighted_pos_vals[lane_id].y += weighted_pos_vals[lane_id + 2].y;
+        
+        // Step 6 (final)
+        mass_vals[lane_id] += mass_vals[lane_id + 1];
+        weighted_pos_vals[lane_id].x += weighted_pos_vals[lane_id + 1].x;
+        weighted_pos_vals[lane_id].y += weighted_pos_vals[lane_id + 1].y;
     }
 }
 
-__device__ void warpReduce(volatile double *totalMass, volatile double2 *centerMass, int tx)
-{
-    totalMass[tx] += totalMass[tx + 32];
-    centerMass[tx].x += centerMass[tx + 32].x;
-    centerMass[tx].y += centerMass[tx + 32].y;
-    totalMass[tx] += totalMass[tx + 16];
-    centerMass[tx].x += centerMass[tx + 16].x;
-    centerMass[tx].y += centerMass[tx + 16].y;
-    totalMass[tx] += totalMass[tx + 8];
-    centerMass[tx].x += centerMass[tx + 8].x;
-    centerMass[tx].y += centerMass[tx + 8].y;
-    totalMass[tx] += totalMass[tx + 4];
-    centerMass[tx].x += centerMass[tx + 4].x;
-    centerMass[tx].y += centerMass[tx + 4].y;
-    totalMass[tx] += totalMass[tx + 2];
-    centerMass[tx].x += centerMass[tx + 2].x;
-    centerMass[tx].y += centerMass[tx + 2].y;
-    totalMass[tx] += totalMass[tx + 1];
-    centerMass[tx].x += centerMass[tx + 1].x;
-    centerMass[tx].y += centerMass[tx + 1].y;
-}
-
-__device__ void ComputeCenterMass(Node &curNode, Body *bodies, double *totalMass, double2 *centerMass, int start, int end)
-{
+// Calculate center of mass for a node
+__device__ void nbody_calculate_com(
+    Body* bodies,             // Bodies array
+    Node& node,               // Node to update
+    double* mass_shared,      // Mass values
+    double2* com_shared,      // Center of mass
+    int first_idx,            // First body index
+    int last_idx              // Last body index
+) {
     int tx = threadIdx.x;
-    int total = end - start + 1;
-    int sz = ceil((double)total / blockDim.x);
-    int s = tx * sz + start;
-    double M = 0.0;
-    double2 R = make_double2(0.0, 0.0);
-
-    for (int i = s; i < s + sz; ++i)
-    {
-        if (i <= end)
-        {
-            Body &body = bodies[i];
-            M += body.mass;
-            R.x += body.mass * body.position.x;
-            R.y += body.mass * body.position.y;
-        }
+    int body_count = last_idx - first_idx + 1;
+    
+    // Distribute work
+    int items_per_thread = (body_count + blockDim.x - 1) / blockDim.x;
+    int start_idx = first_idx + tx * items_per_thread;
+    int end_idx = min(start_idx + items_per_thread - 1, last_idx);
+    
+    // Initialize accumulators
+    double total_mass = 0.0;
+    double mass_weighted_x = 0.0;
+    double mass_weighted_y = 0.0;
+    
+    // Process assigned bodies
+    for (int i = start_idx; i <= end_idx; i++) {
+        Body& body = bodies[i];
+        double body_mass = body.mass;
+        
+        total_mass += body_mass;
+        mass_weighted_x += body_mass * body.position.x;
+        mass_weighted_y += body_mass * body.position.y;
     }
-
-    totalMass[tx] = M;
-    centerMass[tx] = R;
-
-    for (unsigned int stride = blockDim.x / 2; stride > 32; stride >>= 1)
-    {
+    
+    // Store in shared memory
+    mass_shared[tx] = total_mass;
+    com_shared[tx] = make_double2(mass_weighted_x, mass_weighted_y);
+    
+    // Block-level reduction
+    for (unsigned int s = blockDim.x / 2; s > 32; s >>= 1) {
         __syncthreads();
-        if (tx < stride)
-        {
-            totalMass[tx] += totalMass[tx + stride];
-            centerMass[tx].x += centerMass[tx + stride].x;
-            centerMass[tx].y += centerMass[tx + stride].y;
+        
+        if (tx < s) {
+            mass_shared[tx] += mass_shared[tx + s];
+            com_shared[tx].x += com_shared[tx + s].x;
+            com_shared[tx].y += com_shared[tx + s].y;
         }
     }
-
-    if (tx < 32)
-    {
-        warpReduce(totalMass, centerMass, tx);
-    }
+    
+    // Final warp reduction
     __syncthreads();
-
-    if (tx == 0)
-    {
-        centerMass[0].x /= totalMass[0];
-        centerMass[0].y /= totalMass[0];
-        curNode.totalMass = totalMass[0];
-        curNode.centerMass = {centerMass[0].x, centerMass[0].y};
+    if (tx < 32) {
+        nbody_warp_reduce_mass(mass_shared, com_shared, tx);
+    }
+    
+    // Finalize calculation
+    __syncthreads();
+    if (tx == 0 && mass_shared[0] > 0) {
+        node.totalMass = mass_shared[0];
+        node.centerMass.x = com_shared[0].x / mass_shared[0];
+        node.centerMass.y = com_shared[0].y / mass_shared[0];
     }
 }
 
-__device__ void CountBodies(Body *bodies, Vector topLeft, Vector botRight, int *count, int start, int end, int nBodies)
-{
+// Count bodies in each quadrant
+__device__ void nbody_count_per_quadrant(
+    Body* bodies,              // Bodies array
+    const Vector& min_corner,  // Min corner
+    const Vector& max_corner,  // Max corner
+    int* count_array,          // Count array
+    int first_idx,             // First body index
+    int last_idx               // Last body index
+) {
     int tx = threadIdx.x;
-    if (tx < 4)
-        count[tx] = 0;
+    
+    // Initialize counts
+    if (tx < 4) {
+        count_array[tx] = 0;
+    }
+    
     __syncthreads();
-
-    for (int i = start + tx; i <= end; i += blockDim.x)
-    {
+    
+    // Count bodies by quadrant
+    for (int i = first_idx + tx; i <= last_idx; i += blockDim.x) {
         Body body = bodies[i];
-        int q = getQuadrant(topLeft, botRight, body.position.x, body.position.y);
-        atomicAdd(&count[q - 1], 1);
+        int quadrant = nbody_determine_quadrant(min_corner, max_corner, 
+                                          body.position.x, body.position.y);
+        
+        atomicAdd(&count_array[quadrant - 1], 1);
     }
-
+    
     __syncthreads();
 }
 
-__device__ void ComputeOffset(int *count, int start)
-{
+// Calculate offset for each quadrant
+__device__ void nbody_calculate_offsets(
+    int* count_array,    // Count array
+    int start_index      // Starting index
+) {
     int tx = threadIdx.x;
-    if (tx < 4)
-    {
-        int offset = start;
-        for (int i = 0; i < tx; ++i)
-        {
-            offset += count[i];
+    
+    if (tx < 4) {
+        int offset = start_index;
+        
+        for (int i = 0; i < tx; i++) {
+            offset += count_array[i];
         }
-        count[tx + 4] = offset;
+        
+        count_array[tx + 4] = offset;
     }
+    
     __syncthreads();
 }
 
-__device__ void GroupBodies(Body *bodies, Body *buffer, Vector topLeft, Vector botRight, int *count, int start, int end, int nBodies)
-{
-    int *count2 = &count[4];
-    for (int i = start + threadIdx.x; i <= end; i += blockDim.x)
-    {
-        Body body = bodies[i];
-        int q = getQuadrant(topLeft, botRight, body.position.x, body.position.y);
-        int dest = atomicAdd(&count2[q - 1], 1);
-        buffer[dest] = body;
+// Sort bodies by quadrant
+__device__ void nbody_sort_bodies(
+    Body* src_bodies,            // Source bodies
+    Body* dst_bodies,            // Destination bodies
+    const Vector& min_corner,    // Min corner
+    const Vector& max_corner,    // Max corner
+    int* count_array,            // Count array
+    int first_idx,               // First body index
+    int last_idx                 // Last body index
+) {
+    int* offset_array = &count_array[4];
+    
+    for (int i = first_idx + threadIdx.x; i <= last_idx; i += blockDim.x) {
+        Body body = src_bodies[i];
+        
+        int quadrant = nbody_determine_quadrant(min_corner, max_corner, 
+                                          body.position.x, body.position.y);
+        
+        int dest_idx = atomicAdd(&offset_array[quadrant - 1], 1);
+        
+        dst_bodies[dest_idx] = body;
     }
+    
     __syncthreads();
 }
 
-__global__ void ConstructQuadTreeKernel(Node *node, Body *bodies, Body *buffer, int nodeIndex, int nNodes, int nBodies, int leafLimit)
-{
-    __shared__ int count[8];
-    __shared__ double totalMass[BLOCK_SIZE];
-    __shared__ double2 centerMass[BLOCK_SIZE];
+// Build quadtree 
+__global__ void nbody_build_quadtree(
+    Node* tree_nodes,      // Tree nodes
+    Body* src_bodies,      // Source bodies
+    Body* dst_bodies,      // Destination bodies
+    int node_idx,          // Start node index
+    int node_count,        // Node count
+    int body_count,        // Body count
+    int leaf_threshold     // Leaf threshold
+) {
+    // Shared memory
+    __shared__ int quadrant_data[8];  // Counts + offsets
+    __shared__ double mass_shared[BLOCK_SIZE];
+    __shared__ double2 com_shared[BLOCK_SIZE];
+    
     int tx = threadIdx.x;
-    nodeIndex += blockIdx.x;
-
-    if (nodeIndex >= nNodes)
-        return;
-
-    Node &curNode = node[nodeIndex];
-    int start = curNode.start, end = curNode.end;
-    Vector topLeft = curNode.topLeft, botRight = curNode.botRight;
-
-    if (start == -1 && end == -1)
-        return;
-
-    ComputeCenterMass(curNode, bodies, totalMass, centerMass, start, end);
-    if (nodeIndex >= leafLimit || start == end)
-    {
-        for (int i = start; i <= end; ++i)
-        {
-            buffer[i] = bodies[i];
+    node_idx += blockIdx.x;
+    
+    if (node_idx >= node_count) return;
+    
+    Node& current_node = tree_nodes[node_idx];
+    int first_idx = current_node.start;
+    int last_idx = current_node.end;
+    Vector min_corner = current_node.topLeft;
+    Vector max_corner = current_node.botRight;
+    
+    if (first_idx == -1 || last_idx == -1) return;
+    
+    // Calculate center of mass
+    nbody_calculate_com(src_bodies, current_node, mass_shared, com_shared, first_idx, last_idx);
+    
+    // Handle leaf nodes
+    if (node_idx >= leaf_threshold || first_idx == last_idx) {
+        for (int i = first_idx + tx; i <= last_idx; i += blockDim.x) {
+            dst_bodies[i] = src_bodies[i];
         }
-
         return;
     }
-
-    CountBodies(bodies, topLeft, botRight, count, start, end, nBodies);
-    ComputeOffset(count, start);
-    GroupBodies(bodies, buffer, topLeft, botRight, count, start, end, nBodies);
-
-    if (tx == 0)
-    {
-        Node &topLNode = node[(nodeIndex * 4) + 2],
-             &topRNode = node[(nodeIndex * 4) + 1], &botLNode = node[(nodeIndex * 4) + 3], &botRNode = node[(nodeIndex * 4) + 4];
-
-        UpdateChildBound(topLeft, botRight, topLNode, 2);
-        UpdateChildBound(topLeft, botRight, topRNode, 1);
-        UpdateChildBound(topLeft, botRight, botLNode, 3);
-        UpdateChildBound(topLeft, botRight, botRNode, 4);
-
-        curNode.isLeaf = false;
-
-        if (count[0] > 0)
-        {
-            topRNode.start = start;
-            topRNode.end = start + count[0] - 1;
+    
+    // Count and sort bodies
+    nbody_count_per_quadrant(src_bodies, min_corner, max_corner, quadrant_data, first_idx, last_idx);
+    nbody_calculate_offsets(quadrant_data, first_idx);
+    nbody_sort_bodies(src_bodies, dst_bodies, min_corner, max_corner, quadrant_data, first_idx, last_idx);
+    
+    // Create child nodes
+    if (tx == 0) {
+        // Child indices
+        int tr_idx = (node_idx * 4) + 1;  // Top-right
+        int tl_idx = (node_idx * 4) + 2;  // Top-left
+        int bl_idx = (node_idx * 4) + 3;  // Bottom-left
+        int br_idx = (node_idx * 4) + 4;  // Bottom-right
+        
+        // Set boundaries
+        nbody_set_boundaries(tree_nodes[tr_idx], min_corner, max_corner, QuadrantDir::TOP_RIGHT);
+        nbody_set_boundaries(tree_nodes[tl_idx], min_corner, max_corner, QuadrantDir::TOP_LEFT);
+        nbody_set_boundaries(tree_nodes[bl_idx], min_corner, max_corner, QuadrantDir::BOTTOM_LEFT);
+        nbody_set_boundaries(tree_nodes[br_idx], min_corner, max_corner, QuadrantDir::BOTTOM_RIGHT);
+        
+        current_node.isLeaf = false;
+        
+        // Set body ranges
+        if (quadrant_data[0] > 0) {  // Top-right
+            tree_nodes[tr_idx].start = first_idx;
+            tree_nodes[tr_idx].end = first_idx + quadrant_data[0] - 1;
         }
-
-        if (count[1] > 0)
-        {
-            topLNode.start = start + count[0];
-            topLNode.end = start + count[0] + count[1] - 1;
+        
+        if (quadrant_data[1] > 0) {  // Top-left
+            tree_nodes[tl_idx].start = first_idx + quadrant_data[0];
+            tree_nodes[tl_idx].end = first_idx + quadrant_data[0] + quadrant_data[1] - 1;
         }
-
-        if (count[2] > 0)
-        {
-            botLNode.start = start + count[0] + count[1];
-            botLNode.end = start + count[0] + count[1] + count[2] - 1;
+        
+        if (quadrant_data[2] > 0) {  // Bottom-left
+            tree_nodes[bl_idx].start = first_idx + quadrant_data[0] + quadrant_data[1];
+            tree_nodes[bl_idx].end = first_idx + quadrant_data[0] + quadrant_data[1] + quadrant_data[2] - 1;
         }
-
-        if (count[3] > 0)
-        {
-            botRNode.start = start + count[0] + count[1] + count[2];
-            botRNode.end = end;
+        
+        if (quadrant_data[3] > 0) {  // Bottom-right
+            tree_nodes[br_idx].start = first_idx + quadrant_data[0] + quadrant_data[1] + quadrant_data[2];
+            tree_nodes[br_idx].end = last_idx;
         }
-        ConstructQuadTreeKernel<<<4, BLOCK_SIZE>>>(node, buffer, bodies, nodeIndex * 4 + 1, nNodes, nBodies, leafLimit);
+        
+        // Process children recursively
+        nbody_build_quadtree<<<4, BLOCK_SIZE>>>(
+            tree_nodes, dst_bodies, src_bodies, node_idx * 4 + 1, node_count, body_count, leaf_threshold);
     }
 }
 
-/*
-----------------------------------------------------------------------------------------
-COMPUTE FORCE
-----------------------------------------------------------------------------------------
-*/
-__device__ double getDistance(Vector pos1, Vector pos2)
-{
+//==============================================================================
+// FORCE CALCULATION AND INTEGRATION
+//==============================================================================
 
-    return sqrt(pow(pos1.x - pos2.x, 2) + pow(pos1.y - pos2.y, 2));
-}
-
-__device__ bool isCollide(Body &b1, Vector cm)
-{
-    return b1.radius * 2 + COLLISION_TH > getDistance(b1.position, cm);
-}
-
-__device__ void ComputeForce(Node *node, Body *bodies, int nodeIndex, int bodyIndex, int nNodes, int nBodies, int leafLimit, double width)
-{
-
-    if (nodeIndex >= nNodes)
-    {
+// Apply gravitational force
+__device__ void nbody_apply_gravity(
+    const Body& body,       // Target body
+    const Node& node,       // Source node
+    Vector& force_out       // Output force
+) {
+    // Skip invalid/colliding nodes
+    if (node.centerMass.x == -1 || 
+        nbody_detect_collision(body.position, body.radius, node.centerMass)) {
         return;
     }
-    Node curNode = node[nodeIndex];
-    Body bi = bodies[bodyIndex];
-    if (curNode.isLeaf)
-    {
-        if (curNode.centerMass.x != -1 && !isCollide(bi, curNode.centerMass))
-        {
-            Vector rij = {curNode.centerMass.x - bi.position.x, curNode.centerMass.y - bi.position.y};
-            double r = sqrt((rij.x * rij.x) + (rij.y * rij.y) + (E * E));
-            double f = (GRAVITY * bi.mass * curNode.totalMass) / (r * r * r + (E * E));
-            Vector force = {rij.x * f, rij.y * f};
-
-            bodies[bodyIndex].acceleration.x += (force.x / bi.mass);
-            bodies[bodyIndex].acceleration.y += (force.y / bi.mass);
-        }
-        return;
-    }
-
-    double sd = width / getDistance(bi.position, curNode.centerMass);
-    if (sd < THETA)
-    {
-        if (!isCollide(bi, curNode.centerMass))
-        {
-            Vector rij = {curNode.centerMass.x - bi.position.x, curNode.centerMass.y - bi.position.y};
-            double r = sqrt((rij.x * rij.x) + (rij.y * rij.y) + (E * E));
-            double f = (GRAVITY * bi.mass * curNode.totalMass) / (r * r * r + (E * E));
-            Vector force = {rij.x * f, rij.y * f};
-
-            bodies[bodyIndex].acceleration.x += (force.x / bi.mass);
-            bodies[bodyIndex].acceleration.y += (force.y / bi.mass);
-        }
-
-        return;
-    }
-
-    ComputeForce(node, bodies, (nodeIndex * 4) + 1, bodyIndex, nNodes, nBodies, leafLimit, width / 2);
-    ComputeForce(node, bodies, (nodeIndex * 4) + 2, bodyIndex, nNodes, nBodies, leafLimit, width / 2);
-    ComputeForce(node, bodies, (nodeIndex * 4) + 3, bodyIndex, nNodes, nBodies, leafLimit, width / 2);
-    ComputeForce(node, bodies, (nodeIndex * 4) + 4, bodyIndex, nNodes, nBodies, leafLimit, width / 2);
+    
+    // Calculate distance vector
+    double r_x = node.centerMass.x - body.position.x;
+    double r_y = node.centerMass.y - body.position.y;
+    
+    // Calculate force with softening
+    double r_squared = r_x * r_x + r_y * r_y;
+    double r_softened = sqrt(r_squared + E * E);
+    double inv_r_cubed = 1.0 / (r_softened * r_softened * r_softened);
+    
+    double force_magnitude = GRAVITY * body.mass * node.totalMass * inv_r_cubed;
+    
+    force_out.x += r_x * force_magnitude;
+    force_out.y += r_y * force_magnitude;
 }
 
-__global__ void ComputeForceKernel(Node *node, Body *bodies, int nNodes, int nBodies, int leafLimit)
-{
+// Recursive force calculation
+__device__ void nbody_tree_force(
+    Node* tree_nodes,       // Tree nodes
+    const Body& body,       // Target body
+    Vector& force_out,      // Output force
+    int node_idx,           // Current node
+    int node_count,         // Total nodes
+    double cell_size        // Cell size
+) {
+    if (node_idx >= node_count) {
+        return;
+    }
+    
+    Node node = tree_nodes[node_idx];
+    
+    // Leaf node case
+    if (node.isLeaf) {
+        nbody_apply_gravity(body, node, force_out);
+        return;
+    }
+    
+    // Apply Barnes-Hut approximation
+    double distance = nbody_distance(body.position, node.centerMass);
+    double size_distance_ratio = cell_size / distance;
+    
+    if (size_distance_ratio < THETA) {
+        nbody_apply_gravity(body, node, force_out);
+        return;
+    }
+    
+    // Recursively process children
+    double child_size = cell_size * 0.5;
+    nbody_tree_force(tree_nodes, body, force_out, (node_idx * 4) + 1, node_count, child_size);
+    nbody_tree_force(tree_nodes, body, force_out, (node_idx * 4) + 2, node_count, child_size);
+    nbody_tree_force(tree_nodes, body, force_out, (node_idx * 4) + 3, node_count, child_size);
+    nbody_tree_force(tree_nodes, body, force_out, (node_idx * 4) + 4, node_count, child_size);
+}
 
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    double width = node[0].botRight.x - node[0].topLeft.x;
-
-    if (i < nBodies)
-    {
-        Body &bi = bodies[i];
-        if (bi.isDynamic)
-        {
-            bi.acceleration = {0.0, 0.0};
-            ComputeForce(node, bodies, 0, i, nNodes, nBodies, leafLimit, width);
-            bi.velocity.x += bi.acceleration.x * DT;
-            bi.velocity.y += bi.acceleration.y * DT;
-            bi.position.x += bi.velocity.x * DT;
-            bi.position.y += bi.velocity.y * DT;
+// Calculate forces and update positions
+__global__ void nbody_calculate_forces(
+    Node* tree_nodes,       // Tree nodes
+    Body* bodies,           // Bodies array
+    int node_count,         // Total nodes
+    int body_count          // Total bodies
+) {
+    int body_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    double domain_size = tree_nodes[0].botRight.x - tree_nodes[0].topLeft.x;
+    
+    if (body_idx < body_count) {
+        Body& body = bodies[body_idx];
+        
+        if (body.isDynamic) {
+            // Reset acceleration
+            body.acceleration = {0.0, 0.0};
+            
+            // Calculate force
+            Vector net_force = {0.0, 0.0};
+            nbody_tree_force(tree_nodes, body, net_force, 0, node_count, domain_size);
+            
+            // Convert to acceleration (F=ma → a=F/m)
+            body.acceleration.x = net_force.x / body.mass;
+            body.acceleration.y = net_force.y / body.mass;
+            
+            // Update velocity
+            body.velocity.x += body.acceleration.x * DT;
+            body.velocity.y += body.acceleration.y * DT;
+            
+            // Update position
+            body.position.x += body.velocity.x * DT;
+            body.position.y += body.velocity.y * DT;
         }
     }
 }
