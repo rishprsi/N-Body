@@ -10,10 +10,6 @@
 #include "barnesHutCuda.cuh"
 #include "barnesHut_kernel.cuh"
 
-//==============================================================================
-// TYPES AND CONSTANTS
-//==============================================================================
-
 // Physics parameters
 struct NBodyPhysicsParams {
     double gravityConstant;      // Gravitational constant G
@@ -22,10 +18,6 @@ struct NBodyPhysicsParams {
     double collisionThreshold;   // Collision detection threshold
     double softeningFactor;      // Softening factor epsilon
 };
-
-//==============================================================================
-// UTILITY FUNCTIONS
-//==============================================================================
 
 // Calculate distance between two points
 __device__ inline double nbody_distance(const Vector& point_a, const Vector& point_b) {
@@ -60,10 +52,6 @@ __device__ int nbody_determine_quadrant(const Vector& min_bound, const Vector& m
         return (y_pos > mid.y) ? QuadrantDir::TOP_RIGHT : QuadrantDir::BOTTOM_RIGHT;
     }
 }
-
-//==============================================================================
-// INITIALIZATION PHASE
-//==============================================================================
 
 // Initialize tree nodes
 __global__ void nbody_initialize_tree(
@@ -159,10 +147,6 @@ __global__ void nbody_compute_bounds(
         atomicExch(mutex_array, 0);
     }
 }
-
-//==============================================================================
-// TREE CONSTRUCTION PHASE
-//==============================================================================
 
 // Set boundaries for a child node
 __device__ void nbody_set_boundaries(
@@ -459,10 +443,6 @@ __global__ void nbody_build_quadtree(
             tree_nodes, dst_bodies, src_bodies, node_idx * 4 + 1, node_count, body_count, leaf_threshold);
     }
 }
-
-//==============================================================================
-// FORCE CALCULATION AND INTEGRATION
-//==============================================================================
 
 // Apply gravitational force
 __device__ void nbody_apply_gravity(
