@@ -44,6 +44,14 @@ class BarnesHutCuda
     Node *d_node;
     int *d_mutex;
 
+    // Performance metrics
+    float totalTime;
+    float treeInitTime;
+    float boundingBoxTime;
+    float treeConstructTime;
+    float forceCalcTime;
+    long long totalFlops;
+
     void initRandomBodies();
     void initSpiralBodies();
     void initCollideGalaxy();
@@ -61,6 +69,16 @@ public:
     void setup(int sim);
     void readDeviceBodies();
     Body *getBodies();
+    
+    // Performance metrics getters
+    float getTotalTime() const { return totalTime; }
+    float getTreeInitTime() const { return treeInitTime; }
+    float getBoundingBoxTime() const { return boundingBoxTime; }
+    float getTreeConstructTime() const { return treeConstructTime; }
+    float getForceCalcTime() const { return forceCalcTime; }
+    long long getTotalFlops() const { return totalFlops; }
+    void resetTimers();
+    void printPerformanceMetrics();
 };
 
 #endif

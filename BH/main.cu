@@ -3,6 +3,7 @@
 #include <math.h>
 #include <iostream>
 #include <vector>
+#include <fstream>
 #include <opencv2/opencv.hpp>
 #include "barnesHutCuda.cuh"
 #include "constants.h"
@@ -43,6 +44,29 @@ void storeFrame(Body *bodies, int n, int id)
     video.write(image);
 }
 
+void exportPositionsToCSV(Body *bodies, int n, const std::string &filename) {
+    std::ofstream outputFile(filename);
+    if (!outputFile.is_open()) {
+        std::cerr << "Failed to open " << filename << " for writing" << std::endl;
+        return;
+    }
+    
+    // Write header
+    outputFile << "id,x,y,mass,velocity_x,velocity_y" << std::endl;
+    
+    // Write body data
+    for (int i = 0; i < n; i++) {
+        outputFile << i << ","
+                  << bodies[i].position.x << ","
+                  << bodies[i].position.y << ","
+                  << bodies[i].mass << ","
+                  << bodies[i].velocity.x << ","
+                  << bodies[i].velocity.y << std::endl;
+    }
+    
+    outputFile.close();
+}
+
 bool checkArgs(int nBodies, int sim, int iter)
 {
 
@@ -72,7 +96,9 @@ int main(int argc, char **argv)
     int nBodies = NUM_BODIES;
     int sim = 0;
     int iters = 300;
-    if (argc == 4)
+    int exportFreq = 10;  // Export every 10 frames
+    
+    if (argc >= 4)
     {
         nBodies = atoi(argv[1]);
         sim = atoi(argv[2]);
@@ -84,15 +110,49 @@ int main(int argc, char **argv)
 
     if (sim == 3)
         nBodies = 5;
+        
+    std::cout << "Running Barnes-Hut simulation with " << nBodies << " bodies for " 
+              << iters << " iterations" << std::endl;
 
     BarnesHutCuda *bh = new BarnesHutCuda(nBodies);
     bh->setup(sim);
+    
+    system("mkdir -p output_data");
+    
+    // Reset timers before the main simulation loop
+    bh->resetTimers();
 
     for (int i = 0; i < iters; ++i)
     {
         bh->update();
         bh->readDeviceBodies();
         storeFrame(bh->getBodies(), nBodies, i);
+        
+        if (i % exportFreq == 0) {
+            std::string filename = "output_data/positions_" + std::to_string(i) + ".csv";
+            exportPositionsToCSV(bh->getBodies(), nBodies, filename);
+        }
+    }
+
+    bh->printPerformanceMetrics();
+    
+    // Export final performance data
+    std::ofstream perfOutput("performance_results.csv");
+    if (perfOutput.is_open()) {
+        perfOutput << "bodies,iterations,total_time_ms,tree_init_ms,bounding_box_ms,tree_construct_ms,force_calc_ms,total_flops,gflops" << std::endl;
+        perfOutput << nBodies << ","
+                  << iters << ","
+                  << bh->getTotalTime() << ","
+                  << bh->getTreeInitTime() << ","
+                  << bh->getBoundingBoxTime() << ","
+                  << bh->getTreeConstructTime() << ","
+                  << bh->getForceCalcTime() << ","
+                  << bh->getTotalFlops() << ","
+                  << (bh->getTotalFlops() / (bh->getTotalTime() * 1e6)) << std::endl;
+        perfOutput.close();
+        std::cout << "Performance data written to performance_results.csv" << std::endl;
+    } else {
+        std::cerr << "ERROR: Could not open performance_results.csv for writing" << std::endl;
     }
 
     video.release();
