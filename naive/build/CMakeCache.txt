@@ -148,7 +148,7 @@ CMAKE_PROJECT_DESCRIPTION:STATIC=
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=DirectSum
+CMAKE_PROJECT_NAME:STATIC=Naive
 
 //Path to a program.
 CMAKE_RANLIB:FILEPATH=/usr/bin/ranlib
@@ -363,6 +363,15 @@ DirectSum_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 DirectSum_SOURCE_DIR:STATIC=/home/NETID/rishprsi/N-Body/naive
 
+//Value Computed by CMake
+Naive_BINARY_DIR:STATIC=/home/NETID/rishprsi/N-Body/naive/build
+
+//Value Computed by CMake
+Naive_IS_TOP_LEVEL:STATIC=ON
+
+//Value Computed by CMake
+Naive_SOURCE_DIR:STATIC=/home/NETID/rishprsi/N-Body/naive
+
 //The directory containing a CMake configuration file for OpenCV.
 OpenCV_DIR:PATH=/usr/lib64/cmake/OpenCV
 
@@ -526,7 +535,7 @@ CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
 CUDA_64_BIT_DEVICE_CODE-ADVANCED:INTERNAL=1
 //List of intermediate files that are part of the cuda dependency
 // scanning.
-CUDA_ADDITIONAL_CLEAN_FILES:INTERNAL=/home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/DirectSum.dir//DirectSum_generated_naive.cu.o.depend
+CUDA_ADDITIONAL_CLEAN_FILES:INTERNAL=/home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/DirectSum.dir//DirectSum_generated_naive.cu.o.depend;/home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/Naive.dir//Naive_generated_naive.cu.o.depend
 //ADVANCED property for variable: CUDA_ATTACH_VS_BUILD_RULE_TO_CUDA_FILE
 CUDA_ATTACH_VS_BUILD_RULE_TO_CUDA_FILE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CUDA_BUILD_CUBIN

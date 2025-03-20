@@ -18,5 +18,6 @@
 #define SUN_DIA 1.3927e6
 #define EARTH_MASS 5.974e24
 #define EARTH_DIA 12756
+#define HBL 1.6e29
 
 #endif

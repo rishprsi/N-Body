@@ -1,3 +1,3 @@
-/home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/DirectSum.dir
+/home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/Naive.dir
 /home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/edit_cache.dir
 /home/NETID/rishprsi/N-Body/naive/build/CMakeFiles/rebuild_cache.dir

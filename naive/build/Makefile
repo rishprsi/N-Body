@@ -117,17 +117,17 @@ depend:
 .PHONY : depend
 
 #=============================================================================
-# Target rules for targets named DirectSum
+# Target rules for targets named Naive
 
 # Build rule for target.
-DirectSum: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 DirectSum
-.PHONY : DirectSum
+Naive: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 Naive
+.PHONY : Naive
 
 # fast build rule for target.
-DirectSum/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/DirectSum.dir/build.make CMakeFiles/DirectSum.dir/build
-.PHONY : DirectSum/fast
+Naive/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Naive.dir/build.make CMakeFiles/Naive.dir/build
+.PHONY : Naive/fast
 
 # Help Target
 help:
@@ -137,7 +137,7 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
-	@echo "... DirectSum"
+	@echo "... Naive"
 .PHONY : help
 
 

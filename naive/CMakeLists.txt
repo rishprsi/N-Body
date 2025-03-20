@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(DirectSum)
+project(Naive)
 
 find_package(OpenCV REQUIRED)
 if(NOT OpenCV_FOUND)
@@ -23,7 +23,7 @@ set(CMAKE_CXX_STANDARD 11)
 file(GLOB SOURCES *.h *.cu)
 
 # Add the executable
-cuda_add_executable(DirectSum ${SOURCES})
+cuda_add_executable(Naive ${SOURCES})
 
 # Link GLFW and OpenGL libraries
-target_link_libraries(DirectSum ${OpenCV_LIBS})
+target_link_libraries(Naive ${OpenCV_LIBS})

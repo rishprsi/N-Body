@@ -1,2 +1,2 @@
 # Hashes of file build rules.
-4bfdb7cf5d3e02ce7797a0085c12c431 CMakeFiles/DirectSum.dir/DirectSum_generated_naive.cu.o
+cef9406d1bbd0d6613123938c6e98e93 CMakeFiles/Naive.dir/Naive_generated_naive.cu.o
