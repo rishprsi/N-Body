@@ -20,16 +20,17 @@ Vector scaleToWindow(Vector pos)
     return {(pos.x - 0) * scaleX + WINDOW_WIDTH / 2, (pos.y - 0) * scaleY + WINDOW_HEIGHT / 2};
 }
 
-void storeFrame(Body *bodies, int n, int id)
+void storeFrame(Body *bodies, int n, int id, int error_check, Body *naive_bodies)
 {
     cv::Mat image = cv::Mat::zeros(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC3);
     cv::Scalar color; // White color
     int radius;
+    
     for (int i = 0; i < n; i++)
     {
         Vector pos = scaleToWindow(bodies[i].position);
         cv::Point center(pos.x, pos.y);
-
+        // std::cout << " " << pos.x <<" "<< pos.y;
         // stars will be red and planets will be white
         if (bodies[i].mass >= HBL)
         {
@@ -43,6 +44,29 @@ void storeFrame(Body *bodies, int n, int id)
         }
         cv::circle(image, center, radius, color, -1);
     }
+    // std::cout << std::endl;
+    // if (error_check == 1){
+    //     for (int i = 0; i < n; i++)
+    // {
+    //     Vector pos2 = scaleToWindow(naive_bodies[i].position);
+    //     cv::Point center(pos2.x, pos2.y);
+    //     std::cout << " " << pos2.x <<" "<< pos2.y;
+    //     // stars will be red and planets will be white
+    //     if (naive_bodies[i].mass >= HBL)
+    //     {
+    //         color = cv::Scalar(0, 0, 255);
+    //         radius = 5;
+    //     }
+    //     else
+    //     {
+    //         color = cv::Scalar(255, 255,0 );
+    //         radius = 1;
+    //     }
+    //     cv::circle(image, center, radius, color, -1);
+    // }
+    // std::cout << std::endl;
+    // }
+    
     video.write(image);
 }
 
@@ -93,18 +117,45 @@ bool checkArgs(int nBodies, int sim, int iter)
     return true;
 }
 
+double getAvgDivergence(Body *bodies, Body *naive_bodies, int numBodies) {
+    double totalDivergence = 0.0;
+    Body *temp1 = new Body[numBodies];
+    Body *temp2 = new Body[numBodies];
+
+    double maxDistance = sqrt(NBODY_WIDTH * NBODY_WIDTH + NBODY_HEIGHT * NBODY_HEIGHT);
+
+    for (int i = 0; i < numBodies; ++i) {
+        temp1[bodies[i].id] = bodies[i];
+        temp2[naive_bodies[i].id] = naive_bodies[i];
+    }
+    bodies = temp1;
+    naive_bodies = temp2;
+    
+    for (int i = 0; i < numBodies; ++i) {
+        double dx = bodies[i].position.x - naive_bodies[i].position.x;
+        double dy = bodies[i].position.y - naive_bodies[i].position.y;
+        double divergence = sqrt(dx * dx + dy * dy);
+        
+        totalDivergence += divergence/maxDistance;
+    }
+    
+    return numBodies > 0 ? totalDivergence / numBodies : 0.0;
+}
+
 int main(int argc, char **argv)
 {
     int nBodies = NUM_BODIES;
     int sim = 0;
     int iters = 300;
     int exportFreq = 10;  // Export every 10 frames
+    int error_check = 0;
     
     if (argc >= 4)
     {
         nBodies = atoi(argv[1]);
         sim = atoi(argv[2]);
         iters = atoi(argv[3]);
+        error_check = atoi(argv[4]);
     }
 
     if (!checkArgs(nBodies, sim, iters))
@@ -116,8 +167,9 @@ int main(int argc, char **argv)
     std::cout << "Running Barnes-Hut simulation with " << nBodies << " bodies for " 
               << iters << " iterations" << std::endl;
 
-    BarnesHutCuda *bh = new BarnesHutCuda(nBodies);
+    BarnesHutCuda *bh = new BarnesHutCuda(nBodies,error_check);
     bh->setup(sim);
+    Body *bodies;
     
     system("mkdir -p output_data");
 
@@ -125,10 +177,17 @@ int main(int argc, char **argv)
     bh->resetTimers();
     bh->update();
     bh->readDeviceBodies();
-    storeFrame(bh->getBodies(), nBodies, 0);
+    bodies = bh->getBodies();
+    if (error_check==1){
+        bh->runNaive();
+        storeFrame(bodies,nBodies,0,error_check, bh->readNaiveDeviceBodies());
+    }else{
+        storeFrame(bodies, nBodies, 0,error_check,{});
+    }
+    
     
     std::string filename = "output_data/positions_0.csv";
-    exportPositionsToCSV(bh->getBodies(), nBodies, filename);
+    exportPositionsToCSV(bodies, nBodies, filename);
     
     // Reset timers after the warm-up iteration
     bh->resetTimers();
@@ -137,6 +196,8 @@ int main(int argc, char **argv)
     // CUDA events for timing entire execution including memory transfers
     cudaEvent_t start, stop;
     float executionTimeMs;
+
+    
     
     // Start measuring from iteration 1 onwards
     for (int i = 1; i < iters; ++i)
@@ -159,18 +220,34 @@ int main(int argc, char **argv)
         
         // Add the measured time to our total
         bh->addExecutionTime(executionTimeMs);
+
+        
         
         // Clean up CUDA events
         CHECK_CUDA_ERROR(cudaEventDestroy(start));
         CHECK_CUDA_ERROR(cudaEventDestroy(stop));
         
         // Visualization and data export
-        storeFrame(bh->getBodies(), nBodies, i);
+        bodies = bh->getBodies();
+        
+
+        if (error_check==1){
+            bh->runNaive();
+            storeFrame(bodies, nBodies, i,error_check, bh->readNaiveDeviceBodies());
+        }else{
+            storeFrame(bodies, nBodies, i,error_check, {});
+        }
         
         if (i % exportFreq == 0) {
             std::string filename = "output_data/positions_" + std::to_string(i) + ".csv";
-            exportPositionsToCSV(bh->getBodies(), nBodies, filename);
+            exportPositionsToCSV(bodies, nBodies, filename);
         }
+    }
+
+    if (error_check==1){
+        Body *naive_bodies = bh->readNaiveDeviceBodies();
+        double error = getAvgDivergence(bodies,naive_bodies,nBodies);
+        std::cout << "Average error rate is: " << error << std::endl;
     }
 
     // Adjust the iteration count in performance metrics to reflect only the timed iterations

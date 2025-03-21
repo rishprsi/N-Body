@@ -30,4 +30,7 @@ __global__ void nbody_build_quadtree(Node* tree_nodes, Body* src_bodies, Body* d
 __global__ void nbody_calculate_forces(Node* tree_nodes, Body* bodies, 
                                      int node_count, int body_count);
 
+// Direct Sum calculations for error checks
+ __global__ void force_tile_kernel(Body *bodies, int nBodies);
+
 #endif
