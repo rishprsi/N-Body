@@ -4,13 +4,19 @@
 #include "constants.h"
 #include "err.h"
 
-BarnesHutCuda::BarnesHutCuda(int n) : nBodies(n)
+BarnesHutCuda::BarnesHutCuda(int n,int error_check) : nBodies(n)
 {
     nNodes = MAX_NODES;
     leafLimit = MAX_NODES - N_LEAF;
     h_b = new Body[n];
-    h_node = new Node[nNodes];
 
+    h_node = new Node[nNodes];
+    error_flag = error_check;
+    if (error_flag == 1){
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_b_naive, sizeof(Body) * n));
+        h_b_naive = new Body[n];
+    }
+        
     CHECK_CUDA_ERROR(cudaMalloc((void **)&d_b, sizeof(Body) * n));
     CHECK_CUDA_ERROR(cudaMalloc((void **)&d_node, sizeof(Node) * nNodes));
     CHECK_CUDA_ERROR(cudaMalloc((void **)&d_mutex, sizeof(int) * nNodes));
@@ -49,6 +55,10 @@ BarnesHutCuda::~BarnesHutCuda()
 {
     delete[] h_b;
     delete[] h_node;
+    if (error_flag){
+        delete[] h_b_naive;
+        CHECK_CUDA_ERROR(cudaFree(d_b_naive));
+    }  
     CHECK_CUDA_ERROR(cudaFree(d_b));
     CHECK_CUDA_ERROR(cudaFree(d_node));
     CHECK_CUDA_ERROR(cudaFree(d_mutex));
@@ -104,6 +114,7 @@ void BarnesHutCuda::initRandomBodies()
         double x = centerPos.x + radius * std::cos(angle);
         double y = centerPos.y + radius * std::sin(angle);
         Vector position = {x, y};
+        h_b[i].id = i;
         h_b[i].isDynamic = true;
         h_b[i].mass = EARTH_MASS;
         h_b[i].radius = EARTH_DIA;
@@ -111,6 +122,7 @@ void BarnesHutCuda::initRandomBodies()
         h_b[i].velocity = {0.0, 0.0};
         h_b[i].acceleration = {0.0, 0.0};
     }
+    h_b[nBodies - 1].id = nBodies - 1;
     h_b[nBodies - 1].isDynamic = false;
     h_b[nBodies - 1].mass = SUN_MASS;
     h_b[nBodies - 1].radius = SUN_DIA;
@@ -145,7 +157,7 @@ void BarnesHutCuda::initSpiralBodies()
         // Calculate velocity vector components
         double esc = sqrt((GRAVITY * SUN_MASS) / (distance));
         Vector velocity = {-a.y * esc, a.x * esc};
-
+        h_b[i].id = i;
         h_b[i].isDynamic = true;
         h_b[i].mass = EARTH_MASS;
         h_b[i].radius = EARTH_DIA;
@@ -153,6 +165,7 @@ void BarnesHutCuda::initSpiralBodies()
         h_b[i].velocity = velocity;
         h_b[i].acceleration = {0.0, 0.0};
     }
+    h_b[nBodies - 1].id = nBodies - 1;
     h_b[nBodies - 1].isDynamic = false;
     h_b[nBodies - 1].mass = SUN_MASS;
     h_b[nBodies - 1].radius = SUN_DIA;
@@ -190,7 +203,7 @@ void BarnesHutCuda::initCollideGalaxy()
         // Calculate velocity vector components
         double esc = sqrt((GRAVITY * SUN_MASS) / (distance));
         Vector velocity = {-a.y * esc, a.x * esc};
-
+        h_b[i].id = i;
         h_b[i].isDynamic = true;
         h_b[i].mass = EARTH_MASS;
         h_b[i].radius = EARTH_DIA;
@@ -198,6 +211,7 @@ void BarnesHutCuda::initCollideGalaxy()
         h_b[i].velocity = velocity;
         h_b[i].acceleration = {0.0, 0.0};
     }
+    h_b[galaxy1-1].id = galaxy1 - 1;
     h_b[galaxy1 - 1].isDynamic = true;
     h_b[galaxy1 - 1].mass = SUN_MASS;
     h_b[galaxy1 - 1].radius = SUN_DIA;
@@ -226,7 +240,7 @@ void BarnesHutCuda::initCollideGalaxy()
         // Calculate velocity vector components
         double esc = sqrt((GRAVITY * SUN_MASS) / (distance));
         Vector velocity = {-a.y * esc, a.x * esc};
-
+        h_b[i].id = i;
         h_b[i].isDynamic = true;
         h_b[i].mass = EARTH_MASS;
         h_b[i].radius = EARTH_DIA;
@@ -234,6 +248,7 @@ void BarnesHutCuda::initCollideGalaxy()
         h_b[i].velocity = velocity;
         h_b[i].acceleration = {0.0, 0.0};
     }
+    h_b[nBodies - 1].id = nBodies - 1;
     h_b[nBodies - 1].isDynamic = true;
     h_b[nBodies - 1].mass = SUN_MASS;
     h_b[nBodies - 1].radius = SUN_DIA;
@@ -244,6 +259,7 @@ void BarnesHutCuda::initCollideGalaxy()
 
 void BarnesHutCuda::setBody(int i, bool isDynamic, double mass, double radius, Vector position, Vector velocity, Vector acceleration)
 {
+    h_b[i].id = i;
     h_b[i].isDynamic = isDynamic;
     h_b[i].mass = mass;
     h_b[i].radius = radius;
@@ -293,6 +309,9 @@ void BarnesHutCuda::setup(int sim)
 
     CHECK_CUDA_ERROR(cudaMemcpy(d_b, h_b, sizeof(Body) * nBodies, cudaMemcpyHostToDevice));
     CHECK_CUDA_ERROR(cudaMemcpy(d_node, h_node, sizeof(Node) * nNodes, cudaMemcpyHostToDevice));
+    if (error_flag==1){
+        CHECK_CUDA_ERROR(cudaMemcpy(d_b_naive, h_b, sizeof(Body) * nBodies, cudaMemcpyHostToDevice));
+    }
 }
 void BarnesHutCuda::update()
 {
@@ -320,4 +339,18 @@ void BarnesHutCuda::update()
     
     CHECK_CUDA_ERROR(cudaEventDestroy(start));
     CHECK_CUDA_ERROR(cudaEventDestroy(stop));
+    
+}
+
+void BarnesHutCuda::runNaive(){
+    int blockSize = BLOCK_SIZE;
+    dim3 gridSize = ceil((float)nBodies / blockSize);
+    force_tile_kernel<<<gridSize, blockSize>>>(d_b_naive, nBodies);
+    
+}
+
+Body* BarnesHutCuda::readNaiveDeviceBodies()
+{
+    CHECK_CUDA_ERROR(cudaMemcpy(h_b_naive, d_b_naive, sizeof(Body) * nBodies, cudaMemcpyDeviceToHost));
+    return h_b_naive;
 }

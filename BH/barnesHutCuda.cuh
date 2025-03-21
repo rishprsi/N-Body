@@ -9,6 +9,7 @@ typedef struct
 
 typedef struct
 {
+    int id;
     bool isDynamic;
     double mass;
     double radius;
@@ -35,11 +36,14 @@ class BarnesHutCuda
     int nBodies;
     int nNodes;
     int leafLimit;
+    int error_flag;
 
     Body *h_b;
+    Body *h_b_naive;
     Node *h_node;
 
     Body *d_b;
+    Body *d_b_naive;
     Body *d_b_buffer;
     Node *d_node;
     int *d_mutex;
@@ -59,9 +63,10 @@ class BarnesHutCuda
     void computeBoundingBoxCUDA();
     void constructQuadTreeCUDA();
     void computeForceCUDA();
+   
 
 public:
-    BarnesHutCuda(int n);
+    BarnesHutCuda(int n,int error_check);
     ~BarnesHutCuda();
     void update();
     void setup(int sim);
@@ -78,6 +83,8 @@ public:
     long long getTotalFlops() const { return totalFlops; }
     void resetTimers();
     void printPerformanceMetrics();
+    void runNaive();
+    Body *readNaiveDeviceBodies();
 };
 
 #endif

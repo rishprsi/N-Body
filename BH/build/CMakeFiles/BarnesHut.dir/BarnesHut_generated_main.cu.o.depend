@@ -2,6 +2,7 @@
 SET(CUDA_NVCC_DEPEND
   "/home/NETID/rishprsi/N-Body/BH/barnesHutCuda.cuh"
  "/home/NETID/rishprsi/N-Body/BH/constants.h"
+ "/home/NETID/rishprsi/N-Body/BH/err.h"
  "/home/NETID/rishprsi/N-Body/BH/main.cu"
  "/usr/include/alloca.h"
  "/usr/include/asm-generic/errno-base.h"
