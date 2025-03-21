@@ -122,6 +122,8 @@ double getAvgDivergence(Body *bodies, Body *naive_bodies, int numBodies) {
     Body *temp1 = new Body[numBodies];
     Body *temp2 = new Body[numBodies];
 
+    double maxDistance = sqrt(NBODY_WIDTH * NBODY_WIDTH + NBODY_HEIGHT * NBODY_HEIGHT);
+
     for (int i = 0; i < numBodies; ++i) {
         temp1[bodies[i].id] = bodies[i];
         temp2[naive_bodies[i].id] = naive_bodies[i];
@@ -130,12 +132,11 @@ double getAvgDivergence(Body *bodies, Body *naive_bodies, int numBodies) {
     naive_bodies = temp2;
     
     for (int i = 0; i < numBodies; ++i) {
-        std::cout << temp1[i].id << " " << naive_bodies[i].id << std::endl;
         double dx = bodies[i].position.x - naive_bodies[i].position.x;
         double dy = bodies[i].position.y - naive_bodies[i].position.y;
         double divergence = sqrt(dx * dx + dy * dy);
         
-        totalDivergence += divergence;
+        totalDivergence += divergence/maxDistance;
     }
     
     return numBodies > 0 ? totalDivergence / numBodies : 0.0;
