@@ -6,14 +6,12 @@
 #include <math.h>
 #include <iostream>
 #include <vector>
+#include <fstream>
 #include <opencv2/opencv.hpp>
 #include "constants.h"
 #include "err.h"
 
 #define BLOCK_SIZE 256
-
-// Initializes OpenCV for creating a video
-cv::VideoWriter video("nbody.avi", cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, cv::Size(WINDOW_WIDTH, WINDOW_HEIGHT));
 
 // Holds Vector coordinates for the object
 typedef struct
@@ -34,6 +32,12 @@ typedef struct
 
 } Obj;
 
+// Performance metrics
+double totalKernelTime = 0.0;
+double totalExecutionTime = 0.0;
+double totalOperations = 0.0;
+int numIterations = 0;
+
 // Creates a scaled window for the video
 Vector scaleToWindow(Vector pos)
 {
@@ -44,7 +48,7 @@ Vector scaleToWindow(Vector pos)
 }
 
 // For each iteration stores the frame generated
-void storeFrame(Obj *objects, int n, int id)
+void storeFrame(Obj *objects, int n, int id, cv::VideoWriter &video)
 {
     cv::Mat image = cv::Mat::zeros(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC3);
     cv::Scalar color;
@@ -70,6 +74,30 @@ void storeFrame(Obj *objects, int n, int id)
     }
     // Writes to video
     video.write(image);
+}
+
+// Export positions to CSV
+void exportPositionsToCSV(Obj *objects, int n, const std::string &filename) {
+    std::ofstream outputFile(filename);
+    if (!outputFile.is_open()) {
+        std::cerr << "Failed to open " << filename << " for writing" << std::endl;
+        return;
+    }
+    
+    // Write header
+    outputFile << "id,x,y,mass,velocity_x,velocity_y" << std::endl;
+    
+    // Write object data
+    for (int i = 0; i < n; i++) {
+        outputFile << i << ","
+                  << objects[i].position.x << ","
+                  << objects[i].position.y << ","
+                  << objects[i].mass << ","
+                  << objects[i].velocity.x << ","
+                  << objects[i].velocity.y << std::endl;
+    }
+    
+    outputFile.close();
 }
 
 // Creates a galxy like simulation where objects have initial velocities and a center mass
@@ -147,12 +175,91 @@ Obj *initCustomSystem()
     return objects;
 }
 
+// Create a colliding galaxies simulation
+Obj *initCollidingGalaxies(int n)
+{
+    Obj *objects = new Obj[n];
+    srand(time(NULL));
+    
+    int half = n / 2;
+    
+    // First galaxy (centered at left)
+    Vector center1 = {CENTERX - 0.5e11, CENTERY};
+    for (int i = 0; i < half - 1; ++i)
+    {
+        double angle = 2 * M_PI * (rand() / (double)RAND_MAX);
+        double radius = (MAX_DIST - MIN_DIST) * (rand() / (double)RAND_MAX) + MIN_DIST;
+        
+        double x = center1.x + radius * std::cos(angle);
+        double y = center1.y + radius * std::sin(angle);
+        
+        Vector position = {x, y};
+        double distance = sqrt(pow(x - center1.x, 2) + pow(y - center1.y, 2));
+        Vector r = {position.x - center1.x, position.y - center1.y};
+        Vector a = {r.x / distance, r.y / distance};
+        
+        double esc = sqrt((GRAVITY * SUN_MASS) / (distance));
+        Vector velocity = {-a.y * esc + 1.5e4, a.x * esc}; // Add horizontal velocity
+        
+        objects[i].isDynamic = true;
+        objects[i].mass = EARTH_MASS;
+        objects[i].radius = EARTH_DIA;
+        objects[i].position = position;
+        objects[i].velocity = velocity;
+        objects[i].acceleration = {0.0, 0.0};
+    }
+    
+    // Central star of first galaxy
+    objects[half - 1].isDynamic = false;
+    objects[half - 1].mass = SUN_MASS;
+    objects[half - 1].radius = SUN_DIA;
+    objects[half - 1].position = center1;
+    objects[half - 1].velocity = {1.5e4, 0.0}; // Moving right
+    objects[half - 1].acceleration = {0.0, 0.0};
+    
+    // Second galaxy (centered at right)
+    Vector center2 = {CENTERX + 0.5e11, CENTERY};
+    for (int i = half; i < n - 1; ++i)
+    {
+        double angle = 2 * M_PI * (rand() / (double)RAND_MAX);
+        double radius = (MAX_DIST - MIN_DIST) * (rand() / (double)RAND_MAX) + MIN_DIST;
+        
+        double x = center2.x + radius * std::cos(angle);
+        double y = center2.y + radius * std::sin(angle);
+        
+        Vector position = {x, y};
+        double distance = sqrt(pow(x - center2.x, 2) + pow(y - center2.y, 2));
+        Vector r = {position.x - center2.x, position.y - center2.y};
+        Vector a = {r.x / distance, r.y / distance};
+        
+        double esc = sqrt((GRAVITY * SUN_MASS) / (distance));
+        Vector velocity = {-a.y * esc - 1.5e4, a.x * esc}; // Add horizontal velocity
+        
+        objects[i].isDynamic = true;
+        objects[i].mass = EARTH_MASS;
+        objects[i].radius = EARTH_DIA;
+        objects[i].position = position;
+        objects[i].velocity = velocity;
+        objects[i].acceleration = {0.0, 0.0};
+    }
+    
+    // Central star of second galaxy
+    objects[n - 1].isDynamic = false;
+    objects[n - 1].mass = SUN_MASS;
+    objects[n - 1].radius = SUN_DIA;
+    objects[n - 1].position = center2;
+    objects[n - 1].velocity = {-1.5e4, 0.0}; // Moving left
+    objects[n - 1].acceleration = {0.0, 0.0};
+    
+    return objects;
+}
+
 // Checks validity of initial 
 bool argCheck(int nBodies, int sim, int iter)
 {
-    if (sim < 0 || sim > 1)
+    if (sim < 0 || sim > 2)
     {
-        std::cout << "ERROR: simulation isn't valid" << std::endl;
+        std::cout << "ERROR: simulation isn't valid (0=spiral, 1=solar system, 2=colliding)" << std::endl;
         return false;
     }
 
@@ -181,6 +288,11 @@ __device__ double getDistance(Vector pos1, Vector pos2)
 __device__ bool doesCollide(Obj &b1, Obj &b2)
 {
     return b1.radius + b2.radius + COLLISION_TH > getDistance(b1.position, b2.position);
+}
+
+// Calculate FLOPS for naive N-body
+double calculateFlops(int n) {
+    return (double)n * (double)n;
 }
 
 // Main kernel to calculate current position, velocity and acceleration
@@ -234,12 +346,35 @@ __global__ void ForceTiledKernel(Obj *objects, int n)
     }
 }
 
+// Print performance metrics
+void printPerformanceMetrics() {
+    std::cout << "\nPerformance Metrics for Naive N-Body Simulation:" << std::endl;
+    std::cout << "-------------------------------------------" << std::endl;
+    std::cout << "Total iterations measured: " << numIterations << std::endl;
+    std::cout << "Total kernel execution time: " << totalKernelTime << " ms" << std::endl;
+    std::cout << "Average kernel execution time: " << totalKernelTime / numIterations << " ms/iteration" << std::endl;
+    std::cout << "Total execution time (incl. memory transfers): " << totalExecutionTime << " ms" << std::endl;
+    std::cout << "Average execution time: " << totalExecutionTime / numIterations << " ms/iteration" << std::endl;
+    
+    // Calculate GFLOPS
+    double totalFlops = totalOperations;
+    double kernelGflops = totalFlops / (totalKernelTime * 1e6);
+    double effectiveGflops = totalFlops / (totalExecutionTime * 1e6);
+    
+    std::cout << "Total floating-point operations: " << std::fixed << totalFlops << " ops" << std::endl;
+    std::cout << "Kernel performance: " << kernelGflops << " GFLOPS" << std::endl;
+    std::cout << "Effective performance: " << effectiveGflops << " GFLOPS" << std::endl;
+    std::cout << "-------------------------------------------" << std::endl;
+}
+
 int main(int argc, char **argv)
 {
     int nBodies = NUM_BODIES;
     int sim = 0;
     int iters = 300;
-    if (argc == 4)
+    int exportFreq = 10;
+    
+    if (argc >= 4)
     {
         nBodies = atoi(argv[1]);
         sim = atoi(argv[2]);
@@ -248,18 +383,41 @@ int main(int argc, char **argv)
 
     if (!argCheck(nBodies, sim, iters))
         return -1;
+        
+    std::cout << "Running naive N-body simulation with " << nBodies << " bodies for " 
+              << iters << " iterations" << std::endl;
 
+    std::string simType;
+    switch(sim) {
+        case 0: simType = "spiral"; break;
+        case 1: simType = "solar"; break;
+        case 2: simType = "colliding"; break;
+        default: simType = "custom";
+    }
+    
+    system("mkdir -p videos");
+    
+    std::string videoFilename = "videos/" + simType + "_" + std::to_string(nBodies) + ".avi";
+    cv::VideoWriter video(videoFilename, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, cv::Size(WINDOW_WIDTH, WINDOW_HEIGHT));
+    
     Obj *h_bodies;
     // Initializes objects
     if (sim == 0)
     {
         h_bodies = initSpiralObjects(nBodies);
     }
-    else
+    else if (sim == 1)
     {
         nBodies = 5;
         h_bodies = initCustomSystem();
     }
+    else if (sim == 2)
+    {
+        h_bodies = initCollidingGalaxies(nBodies);
+    }
+
+    // Create output directory
+    system("mkdir -p naive_output_data");
 
     // Memory allocation
     int bytes = nBodies * sizeof(Obj);
@@ -270,24 +428,117 @@ int main(int argc, char **argv)
 
     // Kernel configuration
     int blockSize = BLOCK_SIZE;
-    int gridSize = ceil((double)nBodies / blockSize);
-    int it = 0;
+    int gridSize = (nBodies + blockSize - 1) / blockSize;
 
-    // Run the simulation for iters iterations
-    while (it < iters) // main loop
+    // Reset performance counters
+    totalKernelTime = 0.0;
+    totalExecutionTime = 0.0;
+    totalOperations = 0.0;
+    numIterations = 0;
+
+    // CUDA events for timing
+    cudaEvent_t kernelStart, kernelStop, fullStart, fullStop;
+    float kernelTimeMs, executionTimeMs;
+    
+    // Run first iteration (iteration 0) - warmup without timing
+    ForceTiledKernel<<<gridSize, blockSize>>>(d_bodies, nBodies);
+    CHECK_LAST_CUDA_ERROR();
+    CHECK_CUDA_ERROR(cudaMemcpy(h_bodies, d_bodies, bytes, cudaMemcpyDeviceToHost));
+    storeFrame(h_bodies, nBodies, 0, video);
+    
+    // Export initial state
+    std::string filename = "naive_output_data/positions_0.csv";
+    exportPositionsToCSV(h_bodies, nBodies, filename);
+
+    // Run the simulation for timed iterations
+    std::cout << "Starting timed iterations..." << std::endl;
+    
+    for (int it = 1; it < iters; it++)
     {
+        // Create timing events
+        CHECK_CUDA_ERROR(cudaEventCreate(&kernelStart));
+        CHECK_CUDA_ERROR(cudaEventCreate(&kernelStop));
+        CHECK_CUDA_ERROR(cudaEventCreate(&fullStart));
+        CHECK_CUDA_ERROR(cudaEventCreate(&fullStop));
+        
+        // Start full execution timer (including memory transfers)
+        CHECK_CUDA_ERROR(cudaEventRecord(fullStart));
+        
+        // Start kernel timer
+        CHECK_CUDA_ERROR(cudaEventRecord(kernelStart));
+        
+        // Run kernel
         ForceTiledKernel<<<gridSize, blockSize>>>(d_bodies, nBodies);
         CHECK_LAST_CUDA_ERROR();
+        
+        // End kernel timer
+        CHECK_CUDA_ERROR(cudaEventRecord(kernelStop));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(kernelStop));
+        
+        // Copy results back to host
         CHECK_CUDA_ERROR(cudaMemcpy(h_bodies, d_bodies, bytes, cudaMemcpyDeviceToHost));
-        storeFrame(h_bodies, nBodies, ++it);
+        
+        // End full execution timer
+        CHECK_CUDA_ERROR(cudaEventRecord(fullStop));
+        CHECK_CUDA_ERROR(cudaEventSynchronize(fullStop));
+        
+        // Calculate elapsed time
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&kernelTimeMs, kernelStart, kernelStop));
+        CHECK_CUDA_ERROR(cudaEventElapsedTime(&executionTimeMs, fullStart, fullStop));
+        
+        // Update performance metrics
+        totalKernelTime += kernelTimeMs;
+        totalExecutionTime += executionTimeMs;
+        totalOperations += calculateFlops(nBodies);
+        numIterations++;
+        
+        // Cleanup timing events
+        CHECK_CUDA_ERROR(cudaEventDestroy(kernelStart));
+        CHECK_CUDA_ERROR(cudaEventDestroy(kernelStop));
+        CHECK_CUDA_ERROR(cudaEventDestroy(fullStart));
+        CHECK_CUDA_ERROR(cudaEventDestroy(fullStop));
+        
+        // Store frame and export positions
+        storeFrame(h_bodies, nBodies, it, video);
+        
+        if (it % exportFreq == 0) {
+            std::string filename = "naive_output_data/positions_" + std::to_string(it) + ".csv";
+            exportPositionsToCSV(h_bodies, nBodies, filename);
+        }
     }
+    
+    // Print performance metrics
+    printPerformanceMetrics();
+    
+    // Export performance data to CSV
+    std::ofstream perfOutput("naive_performance_results.csv");
+    if (perfOutput.is_open()) {
+        perfOutput << "bodies,iterations,total_kernel_time_ms,avg_kernel_time_ms,total_execution_time_ms,avg_execution_time_ms,total_flops,kernel_gflops,effective_gflops" << std::endl;
+        double kernelGflops = totalOperations / (totalKernelTime * 1e6);
+        double effectiveGflops = totalOperations / (totalExecutionTime * 1e6);
+        
+        perfOutput << nBodies << ","
+                  << numIterations << ","
+                  << totalKernelTime << ","
+                  << (totalKernelTime / numIterations) << ","
+                  << totalExecutionTime << ","
+                  << (totalExecutionTime / numIterations) << ","
+                  << totalOperations << ","
+                  << kernelGflops << ","
+                  << effectiveGflops << std::endl;
+        
+        perfOutput.close();
+        std::cout << "Performance data written to naive_performance_results.csv" << std::endl;
+    } else {
+        std::cerr << "ERROR: Could not open naive_performance_results.csv for writing" << std::endl;
+    }
+
     video.release();
 
     // free memories
     CHECK_CUDA_ERROR(cudaFree(d_bodies));
-    free(h_bodies);
+    delete[] h_bodies;
 
-    CHECK_LAST_CUDA_ERROR();
     return 0;
 }
 
