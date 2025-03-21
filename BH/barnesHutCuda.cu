@@ -20,30 +20,29 @@ BarnesHutCuda::BarnesHutCuda(int n) : nBodies(n)
 }
 
 void BarnesHutCuda::resetTimers() {
-    totalTime = 0.0f;
-    treeInitTime = 0.0f;
-    boundingBoxTime = 0.0f;
-    treeConstructTime = 0.0f;
-    forceCalcTime = 0.0f;
+    totalKernelTime = 0.0f;
+    totalExecutionTime = 0.0f;
+    iterationCount = 0;
     totalFlops = 0;
 }
 
 void BarnesHutCuda::printPerformanceMetrics() {
-    std::cout << "==== Barnes-Hut Performance Metrics ====" << std::endl;
+    std::cout << "==== Barnes-Hut Performance Metrics (Excluding Warm-up Iteration) ====" << std::endl;
     std::cout << "Number of bodies: " << nBodies << std::endl;
-    std::cout << "Total execution time: " << totalTime << " ms" << std::endl;
-    std::cout << "Tree initialization time: " << treeInitTime << " ms (" 
-              << (treeInitTime / totalTime) * 100.0f << "%)" << std::endl;
-    std::cout << "Bounding box computation time: " << boundingBoxTime << " ms (" 
-              << (boundingBoxTime / totalTime) * 100.0f << "%)" << std::endl;
-    std::cout << "Tree construction time: " << treeConstructTime << " ms (" 
-              << (treeConstructTime / totalTime) * 100.0f << "%)" << std::endl;
-    std::cout << "Force calculation time: " << forceCalcTime << " ms (" 
-              << (forceCalcTime / totalTime) * 100.0f << "%)" << std::endl;
+    std::cout << "Total iterations measured: " << iterationCount << std::endl;
+    std::cout << "Total kernel execution time: " << totalKernelTime << " ms" << std::endl;
+    std::cout << "Average kernel time per iteration: " << getAverageKernelTime() << " ms" << std::endl;
+    std::cout << "Total execution time (including memory transfers): " << totalExecutionTime << " ms" << std::endl;
+    std::cout << "Average execution time per iteration: " << getAverageExecutionTime() << " ms" << std::endl;
+    std::cout << "Memory transfer overhead: " << (totalExecutionTime - totalKernelTime) << " ms (" 
+              << ((totalExecutionTime - totalKernelTime) / totalExecutionTime) * 100.0f << "%)" << std::endl;
     
-    double gflops = totalFlops / (totalTime * 1e6); // Convert to GFLOPS
-    std::cout << "Total FLOPS: " << totalFlops << " (" << gflops << " GFLOPS)" << std::endl;
-    std::cout << "=======================================" << std::endl;
+    double gflops = totalFlops / (totalKernelTime * 1e6); // Convert to GFLOPS
+    double effective_gflops = totalFlops / (totalExecutionTime * 1e6); // Effective GFLOPS including memory transfers
+    std::cout << "Total FLOPS: " << totalFlops << std::endl;
+    std::cout << "Kernel-only performance: " << gflops << " GFLOPS" << std::endl;
+    std::cout << "Effective performance (with memory transfers): " << effective_gflops << " GFLOPS" << std::endl;
+    std::cout << "=============================================================" << std::endl;
 }
 
 BarnesHutCuda::~BarnesHutCuda()
@@ -58,100 +57,34 @@ BarnesHutCuda::~BarnesHutCuda()
 
 void BarnesHutCuda::resetCUDA()
 {
-    cudaEvent_t start, stop;
-    CHECK_CUDA_ERROR(cudaEventCreate(&start));
-    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
-    
-    // Record start time
-    CHECK_CUDA_ERROR(cudaEventRecord(start));
-    
     int blockSize = BLOCK_SIZE;
     dim3 gridSize = ceil((float)nNodes / blockSize);
     nbody_initialize_tree<<<gridSize, blockSize>>>(d_node, d_mutex, nNodes, nBodies);
-    
-    // Record end time
-    CHECK_CUDA_ERROR(cudaEventRecord(stop));
-    CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
-    
-    float milliseconds = 0;
-    CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
-    treeInitTime += milliseconds;
-    
-    CHECK_CUDA_ERROR(cudaEventDestroy(start));
-    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 void BarnesHutCuda::computeBoundingBoxCUDA()
 {
-    cudaEvent_t start, stop;
-    CHECK_CUDA_ERROR(cudaEventCreate(&start));
-    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
-    
-    CHECK_CUDA_ERROR(cudaEventRecord(start));
-    
     int blockSize = BLOCK_SIZE;
     dim3 gridSize = ceil((float)nBodies / blockSize);
     nbody_compute_bounds<<<gridSize, blockSize>>>(d_node, d_b, d_mutex, nBodies);
-    
-    CHECK_CUDA_ERROR(cudaEventRecord(stop));
-    CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
-    
-    float milliseconds = 0;
-    CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
-    boundingBoxTime += milliseconds;
-    
-    CHECK_CUDA_ERROR(cudaEventDestroy(start));
-    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 void BarnesHutCuda::constructQuadTreeCUDA()
 {
-    cudaEvent_t start, stop;
-    CHECK_CUDA_ERROR(cudaEventCreate(&start));
-    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
-    
-    CHECK_CUDA_ERROR(cudaEventRecord(start));
-    
     int blockSize = BLOCK_SIZE;
     dim3 gridSize = ceil((float)nBodies / blockSize);
     nbody_build_quadtree<<<1, blockSize>>>(d_node, d_b, d_b_buffer, 0, nNodes, nBodies, leafLimit);
-    
-    CHECK_CUDA_ERROR(cudaEventRecord(stop));
-    CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
-    
-    float milliseconds = 0;
-    CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
-    treeConstructTime += milliseconds;
-    
-    CHECK_CUDA_ERROR(cudaEventDestroy(start));
-    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 void BarnesHutCuda::computeForceCUDA()
 {
-    cudaEvent_t start, stop;
-    CHECK_CUDA_ERROR(cudaEventCreate(&start));
-    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
-    
-    CHECK_CUDA_ERROR(cudaEventRecord(start));
-    
     int blockSize = 32;
     dim3 gridSize = ceil((float)nBodies / blockSize);
     nbody_calculate_forces<<<gridSize, blockSize>>>(d_node, d_b, nNodes, nBodies);
     
-    CHECK_CUDA_ERROR(cudaEventRecord(stop));
-    CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
-    
-    float milliseconds = 0;
-    CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
-    forceCalcTime += milliseconds;
-    
     // Estimate FLOPS for force calculation (approximate)
     long long flopsPerStep = nBodies * log2(nBodies);
     totalFlops += flopsPerStep;
-    
-    CHECK_CUDA_ERROR(cudaEventDestroy(start));
-    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 void BarnesHutCuda::initRandomBodies()
@@ -370,6 +303,7 @@ void BarnesHutCuda::update()
     // Record start time for overall update
     CHECK_CUDA_ERROR(cudaEventRecord(start));
     
+    // Execute all kernels in sequence
     resetCUDA();
     computeBoundingBoxCUDA();
     constructQuadTreeCUDA();
@@ -381,7 +315,8 @@ void BarnesHutCuda::update()
     
     float milliseconds = 0;
     CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
-    totalTime += milliseconds;
+    totalKernelTime += milliseconds;
+    iterationCount++;
     
     CHECK_CUDA_ERROR(cudaEventDestroy(start));
     CHECK_CUDA_ERROR(cudaEventDestroy(stop));

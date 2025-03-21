@@ -17,7 +17,7 @@ void check(T err, const char *const func, const char *const file,
 }
 
 #define CHECK_LAST_CUDA_ERROR() checkLast(__FILE__, __LINE__)
-void checkLast(const char *const file, const int line)
+inline void checkLast(const char *const file, const int line)
 {
     cudaError_t err{cudaGetLastError()};
     if (err != cudaSuccess)

@@ -45,11 +45,9 @@ class BarnesHutCuda
     int *d_mutex;
 
     // Performance metrics
-    float totalTime;
-    float treeInitTime;
-    float boundingBoxTime;
-    float treeConstructTime;
-    float forceCalcTime;
+    float totalKernelTime;
+    float totalExecutionTime;  // Total time including memory transfers
+    int iterationCount;
     long long totalFlops;
 
     void initRandomBodies();
@@ -71,11 +69,12 @@ public:
     Body *getBodies();
     
     // Performance metrics getters
-    float getTotalTime() const { return totalTime; }
-    float getTreeInitTime() const { return treeInitTime; }
-    float getBoundingBoxTime() const { return boundingBoxTime; }
-    float getTreeConstructTime() const { return treeConstructTime; }
-    float getForceCalcTime() const { return forceCalcTime; }
+    float getTotalKernelTime() const { return totalKernelTime; }
+    float getTotalExecutionTime() const { return totalExecutionTime; }
+    void addExecutionTime(float ms) { totalExecutionTime += ms; }
+    int getIterationCount() const { return iterationCount; }
+    float getAverageKernelTime() const { return iterationCount > 0 ? totalKernelTime / iterationCount : 0; }
+    float getAverageExecutionTime() const { return iterationCount > 0 ? totalExecutionTime / iterationCount : 0; }
     long long getTotalFlops() const { return totalFlops; }
     void resetTimers();
     void printPerformanceMetrics();
