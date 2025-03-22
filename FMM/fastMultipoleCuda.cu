@@ -6,7 +6,7 @@
 
 // Constructor
 FastMultipoleCuda::FastMultipoleCuda(int n,int error_check) : nBodies(n), maxDepth(MAX_DEPTH) {
-    // Use fixed size for cells like in Barnes-Hut
+    // Use fixed size for cells like in FMM
     maxCells = MAX_CELLS;
     nCells = 0;
     
@@ -43,7 +43,7 @@ void FastMultipoleCuda::resetTimers() {
 }
 
 void FastMultipoleCuda::printPerformanceMetrics() {
-    std::cout << "==== Barnes-Hut Performance Metrics (Excluding Warm-up Iteration) ====" << std::endl;
+    std::cout << "==== FMM Performance Metrics (Excluding Warm-up Iteration) ====" << std::endl;
     std::cout << "Number of bodies: " << nBodies << std::endl;
     std::cout << "Total iterations measured: " << iterationCount << std::endl;
     std::cout << "Total kernel execution time: " << totalKernelTime << " ms" << std::endl;
