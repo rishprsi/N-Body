@@ -1,19 +1,3 @@
-/*
-   Copyright 2023 Hsin-Hung Wu
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-
 #ifndef FAST_MULTIPOLE_KERNEL_H_
 #define FAST_MULTIPOLE_KERNEL_H_
 
@@ -52,5 +36,8 @@ __global__ void ResetMutexKernel(int *mutex, int n);
 
 // Reset cells kernel
 __global__ void ResetCellsKernel(Cell *cells, int *mutex, int nCells, int nBodies);
+
+// Direct Sum calculations for error checks
+__global__ void force_tile_kernel(Body *bodies, int nBodies);
 
 #endif 

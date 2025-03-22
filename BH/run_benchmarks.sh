@@ -37,7 +37,7 @@ for bodies in "${BODY_COUNTS[@]}"; do
     echo "  Testing with $bodies bodies..."
     
     # Run the Barnes-Hut simulation
-    ./build/BarnesHut $bodies 0 $ITERATIONS
+    ./build/BarnesHut $bodies 0 $ITERATIONS 0
     
     # If performance_results.csv exists, append to consolidated file with simulation type
     if [ -f "performance_results.csv" ]; then
@@ -55,7 +55,7 @@ for bodies in "${BODY_COUNTS[@]}"; do
     echo "  Testing with $bodies bodies..."
     
     # Run the Barnes-Hut simulation
-    ./build/BarnesHut $bodies 2 $ITERATIONS
+    ./build/BarnesHut $bodies 2 $ITERATIONS 0
     
     # If performance_results.csv exists, append to consolidated file with simulation type
     if [ -f "performance_results.csv" ]; then

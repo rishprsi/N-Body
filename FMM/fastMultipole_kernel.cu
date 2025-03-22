@@ -1,22 +1,7 @@
-/*
-   Copyright 2023 Hsin-Hung Wu
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-
 #include <stdio.h>
 #include <math.h>
 #include "constants.h"
+#include "fastMultipoleCuda.cuh"
 #include "fastMultipole_kernel.cuh"
 
 // Helper device functions for complex arithmetic
@@ -580,4 +565,69 @@ __global__ void ResetCellsKernel(Cell *cells, int *mutex, int nCells, int nBodie
         cells[idx].bodyStart = 0;
         cells[idx].bodyCount = nBodies;
     }
-} 
+}
+
+// Direct sum for error calculation
+
+// Kenel to compute distance between two positions for force degradation
+__device__ double getDistance(Vector pos1, Vector pos2)
+{
+    return sqrt(pow(pos1.x - pos2.x, 2) + pow(pos1.y - pos2.y, 2));
+}
+
+// Checks for collision with other objects
+__device__ bool doesCollide(Body &b1, Body &b2)
+{
+    return b1.radius + b2.radius + COLLISION_TH > getDistance(b1.position, b2.position);
+}
+
+// Main kernel to calculate current position, velocity and acceleration
+__global__ void force_tile_kernel(Body *objects, int n)
+{
+    __shared__ Body Bds[BLOCK_SIZE];
+
+    int bx = blockIdx.x;
+    int tx = threadIdx.x;
+    int i = bx * blockDim.x + tx;
+
+    if (i < n)
+    {
+        Body &bi = objects[i];
+        // Initializes needed variables
+        double fx = 0.0, fy = 0.0;
+        bi.acceleration = {0.0, 0.0};
+        for (int tile = 0; tile < gridDim.x; ++tile)
+        {
+            // Updates objects in shared memory for quick access
+            Bds[tx] = objects[tile * blockDim.x + tx];
+            __syncthreads();
+            // Cumulates forcess from each other particle in the simulation using tiling
+            for (int b = 0; b < BLOCK_SIZE; ++b)
+            {
+                int j = tile * blockDim.x + b;
+                if (j < n)
+                {
+                    Body bj = Bds[b];
+                    if (!doesCollide(bi, bj) && bi.isDynamic)
+                    {
+                        // Calculates distances and changes the force based on the gravity and distance of the object
+                        Vector rij = {bj.position.x - bi.position.x, bj.position.y - bi.position.y};
+                        double r = sqrt((rij.x * rij.x) + (rij.y * rij.y) + (E * E));
+                        double f = (GRAVITY * bi.mass * bj.mass) / (r * r * r + (E * E));
+                        Vector force = {rij.x * f, rij.y * f};
+                        fx += (force.x / bi.mass);
+                        fy += (force.y / bi.mass);
+                    }
+                }
+            }
+            __syncthreads();
+        }
+        // Calculates current position, acceleration and velocity of the object
+        bi.acceleration.x += fx;
+        bi.acceleration.y += fy;
+        bi.velocity.x += bi.acceleration.x * DT;
+        bi.velocity.y += bi.acceleration.y * DT;
+        bi.position.x += bi.velocity.x * DT;
+        bi.position.y += bi.velocity.y * DT;
+    }
+}
