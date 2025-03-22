@@ -45,27 +45,27 @@ void storeFrame(Body *bodies, int n, int id, int error_check, Body *naive_bodies
         cv::circle(image, center, radius, color, -1);
     }
     // std::cout << std::endl;
-    // if (error_check == 1){
-    //     for (int i = 0; i < n; i++)
-    // {
-    //     Vector pos2 = scaleToWindow(naive_bodies[i].position);
-    //     cv::Point center(pos2.x, pos2.y);
-    //     std::cout << " " << pos2.x <<" "<< pos2.y;
-    //     // stars will be red and planets will be white
-    //     if (naive_bodies[i].mass >= HBL)
-    //     {
-    //         color = cv::Scalar(0, 0, 255);
-    //         radius = 5;
-    //     }
-    //     else
-    //     {
-    //         color = cv::Scalar(255, 255,0 );
-    //         radius = 1;
-    //     }
-    //     cv::circle(image, center, radius, color, -1);
-    // }
+    if (error_check == 1){
+        for (int i = 0; i < n; i++)
+    {
+        Vector pos2 = scaleToWindow(naive_bodies[i].position);
+        cv::Point center(pos2.x, pos2.y);
+        // std::cout << " " << pos2.x <<" "<< pos2.y;
+        // stars will be red and planets will be white
+        if (naive_bodies[i].mass >= HBL)
+        {
+            color = cv::Scalar(0, 0, 255);
+            radius = 5;
+        }
+        else
+        {
+            color = cv::Scalar(255, 255,0 );
+            radius = 1;
+        }
+        cv::circle(image, center, radius, color, -1);
+    }
     // std::cout << std::endl;
-    // }
+    }
     
     video.write(image);
 }
@@ -117,12 +117,13 @@ bool checkArgs(int nBodies, int sim, int iter)
     return true;
 }
 
+// Calculates Divergence between Direct sum and Barnes Hut
 double getAvgDivergence(Body *bodies, Body *naive_bodies, int numBodies) {
     double totalDivergence = 0.0;
     Body *temp1 = new Body[numBodies];
     Body *temp2 = new Body[numBodies];
 
-    double maxDistance = sqrt(NBODY_WIDTH * NBODY_WIDTH + NBODY_HEIGHT * NBODY_HEIGHT);
+    
 
     for (int i = 0; i < numBodies; ++i) {
         temp1[bodies[i].id] = bodies[i];
@@ -136,7 +137,7 @@ double getAvgDivergence(Body *bodies, Body *naive_bodies, int numBodies) {
         double dy = bodies[i].position.y - naive_bodies[i].position.y;
         double divergence = sqrt(dx * dx + dy * dy);
         
-        totalDivergence += divergence/maxDistance;
+        totalDivergence += divergence;
     }
     
     return numBodies > 0 ? totalDivergence / numBodies : 0.0;
@@ -156,6 +157,10 @@ int main(int argc, char **argv)
         sim = atoi(argv[2]);
         iters = atoi(argv[3]);
         error_check = atoi(argv[4]);
+    }else if (argc==3){
+        nBodies = atoi(argv[1]);
+        sim = atoi(argv[2]);
+        iters = atoi(argv[3]);
     }
 
     if (!checkArgs(nBodies, sim, iters))
@@ -247,7 +252,9 @@ int main(int argc, char **argv)
     if (error_check==1){
         Body *naive_bodies = bh->readNaiveDeviceBodies();
         double error = getAvgDivergence(bodies,naive_bodies,nBodies);
+        double maxDistance = sqrt(NBODY_WIDTH * NBODY_WIDTH + NBODY_HEIGHT * NBODY_HEIGHT);
         std::cout << "Average error rate is: " << error << std::endl;
+        std::cout << "Normalized error rate is: " << error/maxDistance << std::endl;
     }
 
     // Adjust the iteration count in performance metrics to reflect only the timed iterations

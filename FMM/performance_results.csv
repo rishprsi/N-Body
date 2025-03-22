@@ -1,0 +1,2 @@
+bodies,iterations,total_kernel_time_ms,avg_kernel_time_ms,total_execution_time_ms,avg_execution_time_ms,total_flops,kernel_gflops,effective_gflops
+10000,299,170.411,0.568036,213.378,0.711259,0,0,0

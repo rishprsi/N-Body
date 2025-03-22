@@ -1,81 +1,11 @@
-/*
-   Copyright 2023 Hsin-Hung Wu
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-
 #include <iostream>
 #include <cmath>
-#include <cstdlib>
-#include <ctime>
-#include <opencv2/opencv.hpp>
 #include "constants.h"
-#include "err.h"
-#include "fastMultipoleCuda.cuh"
 #include "fastMultipole_kernel.cuh"
-
-// Global video writer for visualization
-cv::VideoWriter video;
-
-// Helper function to store frames
-void storeFrame(Body *bodies, int nBodies, int frameNum) {
-    cv::Mat img(WINDOW_HEIGHT, WINDOW_WIDTH, CV_8UC3, cv::Scalar(0, 0, 0));
-    
-    if (frameNum == 0) {
-        std::string filename = "fmm_simulation.avi";
-        video.open(filename, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 30, img.size(), true);
-        if (!video.isOpened()) {
-            std::cerr << "Could not open the output video file for write" << std::endl;
-            return;
-        }
-    }
-    
-    for (int i = 0; i < nBodies; i++) {
-        Body &b = bodies[i];
-        double x = (b.position.x - (-NBODY_WIDTH / 2)) * WINDOW_WIDTH / NBODY_WIDTH;
-        double y = (b.position.y - (-NBODY_HEIGHT / 2)) * WINDOW_HEIGHT / NBODY_HEIGHT;
-        
-        if (x >= 0 && x < WINDOW_WIDTH && y >= 0 && y < WINDOW_HEIGHT) {
-            double radius = std::max(1.0, std::log10(b.mass) / 3.0);
-            cv::circle(img, cv::Point(x, y), radius, cv::Scalar(255, 255, 255), -1);
-        }
-    }
-    
-    video.write(img);
-}
-
-// Check command line arguments
-bool checkArgs(int nBodies, int sim, int iter) {
-    if (nBodies < 1) {
-        std::cout << "ERROR: need to have at least 1 body" << std::endl;
-        return false;
-    }
-
-    if (sim < 0 || sim > 3) {
-        std::cout << "ERROR: simulation doesn't exist" << std::endl;
-        return false;
-    }
-
-    if (iter < 1) {
-        std::cout << "ERROR: need to have at least 1 iteration" << std::endl;
-        return false;
-    }
-
-    return true;
-}
+#include "err.h"
 
 // Constructor
-FastMultipoleCuda::FastMultipoleCuda(int n) : nBodies(n), maxDepth(MAX_DEPTH) {
+FastMultipoleCuda::FastMultipoleCuda(int n,int error_check) : nBodies(n), maxDepth(MAX_DEPTH) {
     // Use fixed size for cells like in Barnes-Hut
     maxCells = MAX_CELLS;
     nCells = 0;
@@ -85,6 +15,11 @@ FastMultipoleCuda::FastMultipoleCuda(int n) : nBodies(n), maxDepth(MAX_DEPTH) {
     h_cells = new Cell[maxCells];
     h_cellCount = new int;
     h_sortedIndex = new int[nBodies];
+    error_flag = error_check;
+    if (error_flag == 1){
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_b_naive, sizeof(Body) * n));
+        h_b_naive = new Body[n];
+    }
     
     // Allocate device memory
     CHECK_CUDA_ERROR(cudaMalloc((void **)&d_bodies, sizeof(Body) * nBodies));
@@ -96,6 +31,34 @@ FastMultipoleCuda::FastMultipoleCuda(int n) : nBodies(n), maxDepth(MAX_DEPTH) {
     
     // Initialize cell count to zero
     *h_cellCount = 0;
+
+    resetTimers();
+}
+
+void FastMultipoleCuda::resetTimers() {
+    totalKernelTime = 0.0f;
+    totalExecutionTime = 0.0f;
+    iterationCount = 0;
+    totalFlops = 0;
+}
+
+void FastMultipoleCuda::printPerformanceMetrics() {
+    std::cout << "==== Barnes-Hut Performance Metrics (Excluding Warm-up Iteration) ====" << std::endl;
+    std::cout << "Number of bodies: " << nBodies << std::endl;
+    std::cout << "Total iterations measured: " << iterationCount << std::endl;
+    std::cout << "Total kernel execution time: " << totalKernelTime << " ms" << std::endl;
+    std::cout << "Average kernel time per iteration: " << getAverageKernelTime() << " ms" << std::endl;
+    std::cout << "Total execution time (including memory transfers): " << totalExecutionTime << " ms" << std::endl;
+    std::cout << "Average execution time per iteration: " << getAverageExecutionTime() << " ms" << std::endl;
+    std::cout << "Memory transfer overhead: " << (totalExecutionTime - totalKernelTime) << " ms (" 
+              << ((totalExecutionTime - totalKernelTime) / totalExecutionTime) * 100.0f << "%)" << std::endl;
+    
+    double gflops = totalFlops / (totalKernelTime * 1e6); // Convert to GFLOPS
+    double effective_gflops = totalFlops / (totalExecutionTime * 1e6); // Effective GFLOPS including memory transfers
+    std::cout << "Total FLOPS: " << totalFlops << std::endl;
+    std::cout << "Kernel-only performance: " << gflops << " GFLOPS" << std::endl;
+    std::cout << "Effective performance (with memory transfers): " << effective_gflops << " GFLOPS" << std::endl;
+    std::cout << "=============================================================" << std::endl;
 }
 
 // Destructor
@@ -105,6 +68,11 @@ FastMultipoleCuda::~FastMultipoleCuda() {
     delete[] h_cells;
     delete h_cellCount;
     delete[] h_sortedIndex;
+
+    if (error_flag){
+        delete[] h_b_naive;
+        CHECK_CUDA_ERROR(cudaFree(d_b_naive));
+    }
     
     // Free device memory
     CHECK_CUDA_ERROR(cudaFree(d_bodies));
@@ -285,6 +253,13 @@ void FastMultipoleCuda::update() {
     int gridSize = (maxCells + blockSize - 1) / blockSize;
     ResetMutexKernel<<<gridSize, blockSize>>>(d_mutex, maxCells);
     CHECK_LAST_CUDA_ERROR();
+
+    cudaEvent_t start, stop;
+    CHECK_CUDA_ERROR(cudaEventCreate(&start));
+    CHECK_CUDA_ERROR(cudaEventCreate(&stop));
+    
+    // Record start time for overall update
+    CHECK_CUDA_ERROR(cudaEventRecord(start));
     
     // Execute FMM algorithm steps
     buildTree();
@@ -293,6 +268,18 @@ void FastMultipoleCuda::update() {
     computeLocalExpansions();
     evaluateLocalExpansions();
     directEvaluation();
+
+    // Record end time
+    CHECK_CUDA_ERROR(cudaEventRecord(stop));
+    CHECK_CUDA_ERROR(cudaEventSynchronize(stop));
+    
+    float milliseconds = 0;
+    CHECK_CUDA_ERROR(cudaEventElapsedTime(&milliseconds, start, stop));
+    totalKernelTime += milliseconds;
+    iterationCount++;
+    
+    CHECK_CUDA_ERROR(cudaEventDestroy(start));
+    CHECK_CUDA_ERROR(cudaEventDestroy(stop));
 }
 
 // Build the tree structure
@@ -371,4 +358,17 @@ void FastMultipoleCuda::readDeviceBodies() {
 // Get bodies
 Body* FastMultipoleCuda::getBodies() {
     return h_bodies;
-} 
+}
+
+void FastMultipoleCuda::runNaive(){
+    int blockSize = BLOCK_SIZE;
+    dim3 gridSize = ceil((float)nBodies / blockSize);
+    force_tile_kernel<<<gridSize, blockSize>>>(d_b_naive, nBodies);
+    
+}
+
+Body* FastMultipoleCuda::readNaiveDeviceBodies()
+{
+    CHECK_CUDA_ERROR(cudaMemcpy(h_b_naive, d_b_naive, sizeof(Body) * nBodies, cudaMemcpyDeviceToHost));
+    return h_b_naive;
+}

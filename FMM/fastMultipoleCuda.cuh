@@ -1,19 +1,3 @@
-/*
-   Copyright 2023 Hsin-Hung Wu
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-*/
-
 #ifndef FAST_MULTIPOLE_CUDA_H_
 #define FAST_MULTIPOLE_CUDA_H_
 
@@ -25,6 +9,7 @@ typedef struct
 
 typedef struct
 {
+    int id;
     bool isDynamic;
     double mass;
     double radius;
@@ -64,9 +49,12 @@ private:
     int nCells;
     int maxCells;
     int maxDepth;
+    int error_flag;
     
     Body *h_bodies;
+    Body *h_b_naive;
     Body *d_bodies;
+    Body *d_b_naive;
     Body *d_bodies_buffer;
     
     Cell *h_cells;
@@ -79,6 +67,12 @@ private:
     int *d_sortedIndex;
     
     int *d_mutex;  // Add mutex for synchronization
+
+    // Performance metrics
+    float totalKernelTime;
+    float totalExecutionTime;  // Total time including memory transfers
+    int iterationCount;
+    long long totalFlops;
     
     // Simulation initialization methods
     void initRandomBodies();
@@ -96,13 +90,26 @@ private:
     void directEvaluation();
     
 public:
-    FastMultipoleCuda(int n);
+    FastMultipoleCuda(int n, int error_check);
     ~FastMultipoleCuda();
     
     void setup(int sim);
     void update();
     void readDeviceBodies();
     Body* getBodies();
+
+    // Performance metrics getters
+    float getTotalKernelTime() const { return totalKernelTime; }
+    float getTotalExecutionTime() const { return totalExecutionTime; }
+    void addExecutionTime(float ms) { totalExecutionTime += ms; }
+    int getIterationCount() const { return iterationCount; }
+    float getAverageKernelTime() const { return iterationCount > 0 ? totalKernelTime / iterationCount : 0; }
+    float getAverageExecutionTime() const { return iterationCount > 0 ? totalExecutionTime / iterationCount : 0; }
+    long long getTotalFlops() const { return totalFlops; }
+    void resetTimers();
+    void printPerformanceMetrics();
+    void runNaive();
+    Body *readNaiveDeviceBodies();
 };
 
 #endif 
