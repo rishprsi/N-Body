@@ -1,6 +1,9 @@
 #ifndef BARNES_HUT_CUDA_H_
 #define BARNES_HUT_CUDA_H_
 
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+
 typedef struct
 {
     double x;

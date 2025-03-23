@@ -5,7 +5,6 @@
 #include <vector>
 #include <fstream>
 #include <opencv2/opencv.hpp>
-#include <cuda_runtime.h>
 #include "barnesHutCuda.cuh"
 #include "constants.h"
 #include "err.h"
@@ -145,6 +144,8 @@ double getAvgDivergence(Body *bodies, Body *naive_bodies, int numBodies) {
 
 int main(int argc, char **argv)
 {
+    cudaDeviceSetLimit(cudaLimitStackSize, 8192);
+
     int nBodies = NUM_BODIES;
     int sim = 0;
     int iters = 300;
@@ -176,7 +177,7 @@ int main(int argc, char **argv)
     bh->setup(sim);
     Body *bodies;
     
-    system("mkdir -p output_data");
+    //system("mkdir -p output_data");
 
     // First iteration (iteration 0) - warm-up run without timing
     bh->resetTimers();
