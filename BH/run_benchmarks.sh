@@ -23,7 +23,7 @@ mkdir -p benchmark_results
 
 # Create consolidated results file with header
 RESULTS_FILE="benchmark_results/consolidated_benchmarks.csv"
-echo "simulation_type,bodies,iterations,total_kernel_time_ms,avg_kernel_time_ms,total_execution_time_ms,avg_execution_time_ms,total_flops,kernel_gflops,effective_gflops" > $RESULTS_FILE
+echo "simulation_type,bodies,iterations,total_kernel_time_ms,avg_kernel_time_ms,total_execution_time_ms,avg_execution_time_ms,flop,kernel_gflops,total_gflops" > $RESULTS_FILE
 
 # Array of body counts to test
 BODY_COUNTS=(1000 5000 10000 50000 100000 500000 1000000 5000000)
