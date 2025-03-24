@@ -292,7 +292,7 @@ __device__ bool doesCollide(Obj &b1, Obj &b2)
 
 // Calculate FLOPS for naive N-body
 double calculateFlops(int n) {
-    return (double)n * (double)n;
+    return (double)n * (double)n * 20;
 }
 
 // Main kernel to calculate current position, velocity and acceleration

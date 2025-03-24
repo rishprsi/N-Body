@@ -93,7 +93,7 @@ void BarnesHutCuda::computeForceCUDA()
     nbody_calculate_forces<<<gridSize, blockSize>>>(d_node, d_b, nNodes, nBodies);
     
     // Estimate FLOPS for force calculation (approximate)
-    long long flopsPerStep = nBodies * log2(nBodies);
+    long long flopsPerStep = nBodies * log2(nBodies) * 27 * 50;
     totalFlops += flopsPerStep;
 }
 
