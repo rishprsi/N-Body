@@ -69,29 +69,6 @@ void storeFrame(Body *bodies, int n, int id, int error_check, Body *naive_bodies
     video.write(image);
 }
 
-void exportPositionsToCSV(Body *bodies, int n, const std::string &filename) {
-    std::ofstream outputFile(filename);
-    if (!outputFile.is_open()) {
-        std::cerr << "Failed to open " << filename << " for writing" << std::endl;
-        return;
-    }
-    
-    // Write header
-    outputFile << "id,x,y,mass,velocity_x,velocity_y" << std::endl;
-    
-    // Write body data
-    for (int i = 0; i < n; i++) {
-        outputFile << i << ","
-                  << bodies[i].position.x << ","
-                  << bodies[i].position.y << ","
-                  << bodies[i].mass << ","
-                  << bodies[i].velocity.x << ","
-                  << bodies[i].velocity.y << std::endl;
-    }
-    
-    outputFile.close();
-}
-
 bool checkArgs(int nBodies, int sim, int iter)
 {
 
@@ -149,7 +126,6 @@ int main(int argc, char **argv)
     int nBodies = NUM_BODIES;
     int sim = 0;
     int iters = 300;
-    int exportFreq = 10;  // Export every 10 frames
     int error_check = 0;
     
     if (argc >= 4)
@@ -177,7 +153,6 @@ int main(int argc, char **argv)
     bh->setup(sim);
     Body *bodies;
     
-    //system("mkdir -p output_data");
 
     // First iteration (iteration 0) - warm-up run without timing
     bh->resetTimers();
@@ -191,10 +166,7 @@ int main(int argc, char **argv)
         storeFrame(bodies, nBodies, 0,error_check,{});
     }
     
-    
-    std::string filename = "output_data/positions_0.csv";
-    exportPositionsToCSV(bodies, nBodies, filename);
-    
+        
     // Reset timers after the warm-up iteration
     bh->resetTimers();
     std::cout << "Starting timed iterations (excluding warm-up iteration)..." << std::endl;
@@ -233,7 +205,7 @@ int main(int argc, char **argv)
         CHECK_CUDA_ERROR(cudaEventDestroy(start));
         CHECK_CUDA_ERROR(cudaEventDestroy(stop));
         
-        // Visualization and data export
+        // Visualization
         bodies = bh->getBodies();
         
 
@@ -242,11 +214,6 @@ int main(int argc, char **argv)
             storeFrame(bodies, nBodies, i,error_check, bh->readNaiveDeviceBodies());
         }else{
             storeFrame(bodies, nBodies, i,error_check, {});
-        }
-        
-        if (i % exportFreq == 0) {
-            std::string filename = "output_data/positions_" + std::to_string(i) + ".csv";
-            exportPositionsToCSV(bodies, nBodies, filename);
         }
     }
 
