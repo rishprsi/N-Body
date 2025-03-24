@@ -5,7 +5,24 @@ Implementations of various N-body simulation algorithms:
 - Direct Summation (Naive): O(n²) exact calculation
 - Fast Multipole Method (FMM): O(n) multipole expansion-based approximation
 
-## Building the Project
+## Requirements
+All Platforms:
+- OpenCV
+
+On Windows:
+- OpenGL (not used)
+- Visual Studio 2019
+
+## Building the Project On Windows
+Each algorithm is in its own directory. To run a simulation:
+
+- Open the solution file inside the chosen algorithm's directory.
+- Go to Project -> Properties.
+- Under Configuration Properties -> Debugging, go to command line arguments (see Parameters) and edit as desired.
+- Run the simulation with "Local Windows Debugger."
+
+
+## Building the Project On Linux
 
 Each algorithm is in its own directory. Build them individually:
 
@@ -120,3 +137,14 @@ The application collects:
 - Memory transfer overhead
 - FLOPS calculations
 - Visualization of simulation
+
+
+## Demos
+Demos for each type of simulation are on Google Drive, and the links to each can be found below:
+
+- [Spiral](https://drive.google.com/file/d/1rrUcyskZfSkmFZX80QeRIY8FLLrlIPBh/view?usp=sharing)
+- [Random Bodies](https://drive.google.com/file/d/18F7LHWiciP6AH_SibAQ1ORl2z69vqTui/view?usp=sharing)
+- [Galaxy Collision](https://drive.google.com/file/d/1gI1YKynvtYgaKmnyQFxjWZGkhzM0pyNM/view?usp=sharing)
+- [Solar System](https://drive.google.com/file/d/1xzfObLiw8sC9THEVyLmxeeVNvty54jMp/view?usp=sharing)
+
+
